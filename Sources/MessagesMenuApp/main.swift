@@ -117,11 +117,15 @@ private actor RuntimeStatusSignal {
     }
 
     @objc private func requestContacts() {
-        contactsStore.requestAccess(for: .contacts) { [weak self] granted, _ in
-            Task { @MainActor in
-                guard let self else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let granted = try await CNContactStore().requestAccess(for: .contacts)
                 if granted { self.refreshSetupState(); self.showSettings() }
                 else { self.status = .contactsRequired; self.refreshMenu() }
+            } catch {
+                self.status = .contactsRequired
+                self.refreshMenu()
             }
         }
     }

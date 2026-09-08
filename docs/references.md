@@ -37,6 +37,12 @@ Apple’s public [container API](https://developer.apple.com/documentation/conta
 
 For direct access, Google’s [contact search](https://developers.google.com/people/api/rest/v1/people/searchContacts) is prefix-based and capped at 30 results. [Connections listing](https://developers.google.com/people/api/rest/v1/people.connections/list) provides pagination for complete discovery. [Batch get](https://developers.google.com/people/api/rest/v1/people/getBatchGet) can refresh known contacts, with explicit source and field selection. These API contracts were inspected; native OAuth and directory operations have not been exercised by this project.
 
+## Unicode matching references
+
+[Unicode 16 case-folding data](https://www.unicode.org/Public/16.0.0/ucd/CaseFolding.txt) maps ß to ss and dotted capital İ to i plus combining dot under the default full fold. [Unicode's case-mapping guidance](https://www.unicode.org/faq/casemap_charprop.html) distinguishes case folding from lowercasing. These support reasoning about the isolated false match; they do not replace runtime reproduction or establish every platform's behavior.
+
+The proposed matcher uses public [NSString searching](https://developer.apple.com/documentation/foundation/nsstring/range(of:options:range:locale:)) and Swift Character iteration. Canonical/case-insensitive comparison and whole-grapheme boundaries are distinct parts of the local contract. No framework code was decompiled or disassembled.
+
 ## Source and data boundaries
 
 Public documentation is original prose with source links. Reused open-source code or fixtures must retain their required license and attribution. Proprietary extracted artifacts remain outside the repository.

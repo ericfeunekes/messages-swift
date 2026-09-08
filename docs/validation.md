@@ -16,6 +16,29 @@ A real SQLite probe with 100,000 synthetic rows passed descending-pagination che
 
 The public-core release search returned correct rare and absent results on a 100,000-message, approximately 36 MiB on-disk fixture with 50% attributed-only bodies. In the measured repeat, each search took 11.91–12.04 seconds, failing the proposed five-second budget. Whole-process peak RSS was 44.02 MiB, including fixture setup and six searches; no isolated allocation or cold-disk claim is made. The single-pass follow-up preserved the fixture, decoder, candidate predicates, coalescing checkpoints and result assertions. All 77 selected tests passed, including a scan-count check that failed the original implementation and passed the change. Search took 5.8689–5.9038 seconds, approximately half the baseline, with whole-process peak RSS 43.82 MiB. The proposed five-second bound remains unmet. No index or scope reduction was used. Stable synthetic results are proven; concurrent-writer snapshot behavior and unindexed/common-match performance remain unproven.
 
+## Search profiling and matching-policy experiment
+
+Continued profiling separated the remaining costs. Instrumented matching time was approximately 4.75–5.18 seconds; row decoding was 0.79–0.88 seconds, including only 0.069–0.076 seconds in the attributed-body parser. SQLite iteration time included its text-matching callback, so these intervals overlap and must not be summed. An independent CPU sample placed the dominant stacks in case-insensitive String.range and string/Character transformation. Native unarchiving occurs during fixture generation, not runtime search.
+
+One streaming scan plus text-first matching and shared text resolution reduced the unchanged workload to 5.315–5.446 seconds. All 79 selected tests passed, including a test that detected and removed duplicate audio-transcript queries. This retained the existing matching behavior but still missed the proposed five-second target.
+
+A separate native NSString matcher experiment exposed a contract distinction. On the tested Mac, the old String.range path matched st for a query of ß inside İstanbul; an isolated probe printed the scalars, actual substring and range. Native search rejected that result. Other differences concerned matches inside combined characters, which are a separate policy issue. This is not evidence about OpenAI's implementation or all Foundation versions.
+
+The preferred policy proposal combines native case-insensitive/canonical search with whole Swift Character boundaries. It continues after a rejected partial match, uses one boundary pass plus a set and forward-only position, and retains the existing exact-comparison mode. All 80 selected tests passed. Deliberately stopping at the first rejected partial match failed three later-valid cases; restoring continuation passed. Independent review found no material objection after replacing repeated linear boundary lookups. This is an explicit proposed matching contract, not bug-for-bug equivalence to the old path.
+
+| Frozen 100,000-message workload | Time per rare/no-match search |
+|---|---:|
+| Original public-core implementation | 11.91–12.04 s |
+| One streaming scan | 5.87–5.90 s |
+| Shared text-first resolution, existing matcher | 5.315–5.446 s |
+| Native matcher with whole-Character policy | 1.098–1.138 s |
+
+The final policy experiment used the same evaluator, fixture, queries, indexes and assertions, with 50% attributed-only bodies. Whole-process peak RSS was 43.84 MiB, including setup and six searches. No persistent text index or cache was introduced. The performance proposal passes for this policy on the controlled warm workload; the strict old-behavior path does not. These samples are not a p95 or real-history benchmark.
+
+Separate probes found common-match limit-50 searches in roughly 2–4 ms with the ordering index and 0.3–0.5 seconds without it on the text-first implementation. A reject-heavy final-matcher probe scaled from approximately 2.3 ms at 1,000 graphemes to 39.8 ms at 16,000. These do not replace the frozen evaluator or establish a universal worst-case bound. A WAL probe confirmed that an active read statement and its nested read see a consistent pre-commit snapshot until the statement ends; long-reader WAL retention and live contention remain unmeasured.
+
+The source adaptation and policy tests remain preparatory artifacts. Production adoption requires the matching-policy decision in [open decisions](decisions.md#search-matching-policy), integration tests and the remaining live boundaries. The underlying baseline still needs the separately specified explicit decoding-failure model.
+
 ## Source and fixture policy
 
 Reuse suitable public Swift parser, schema, Contacts and attachment fixtures with their licenses and expected outcomes intact. Fixture tests should exercise real SQLite queries and decoding; mocks are reserved for controlled variations or failures. Do not commit real conversations, contact directories, attachment files or user aliases.

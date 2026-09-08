@@ -34,6 +34,12 @@ This is the register of unresolved requirements and design choices. It separates
 
 Define how history, search and counts treat reaction events, edited/retracted messages, system rows and URL-preview rows. They must share one consistent message model. OpenAI's exact internal rules are unknown. Use public fixtures and visible behavior to choose a clear local contract.
 
+## Search matching policy
+
+The owner requested continued decoded-search diagnosis. Profiling found that matching dominated decoding. Preserving the existing matcher reaches approximately 5.3–5.4 seconds on the fixed workload; a native matcher with whole Swift Character boundaries reaches approximately 1.1 seconds and fixes an isolated false match. See [validation](validation.md#search-profiling-and-matching-policy-experiment).
+
+Proposed contract: case-insensitive, canonically equivalent substring matching that begins and ends at whole Swift Character boundaries. Combined letters and emoji are not split, and a rejected partial match must not prevent finding a later valid one. Exact mode remains full-string comparison. The alternative is ordinary native component-substring matching. Owner choice was requested; neither prototype silently changes production behavior. Matching every accidental result of the old Foundation path is not the project's goal.
+
 ## Performance
 
 Proposed initial targets on the Intel reference machine:
@@ -42,7 +48,7 @@ Proposed initial targets on the Intel reference machine:
 - one filtered history page: p95 below 500 ms;
 - no-match decoded-body search over a controlled 100,000-message fixture: below 5 seconds.
 
-These targets remain proposed. Removing repeated prefix scans reduced correct rare/no-match decoded-body search from approximately 12 seconds to 5.87–5.90 seconds on the unchanged controlled 100,000-message fixture. The five-second proposal remains unmet. See [validation](validation.md#preparatory-evidence-september-8-2026) for the measurement and correctness limits. The recommendation is to proceed with the simpler no-index approach and measure normal usage before adding a persistent index; owner confirmation is pending. Do not describe this as meeting the five-second proposal or silently narrow search/omit decoded text.
+The continued investigation supersedes the earlier six-second/indexing tradeoff. The preferred matching-policy prototype completes the unchanged controlled workload in 1.098–1.138 seconds without an index and passes the proposed five-second bound under that explicit policy. The old-matcher-preserving path remains above five seconds. The recommendation is to adopt the tested matching rule, retain no persistent body index, and measure representative integrated usage. See [validation](validation.md#search-profiling-and-matching-policy-experiment) for limits; no policy acceptance or production-performance claim is implied.
 
 ## Requirements completion
 

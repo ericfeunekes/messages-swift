@@ -233,5 +233,14 @@ A live warm read exposed CNErrorDomain code 2 with a property-not-fetched except
 in the native Contacts predicate path. Candidate phone/email fetches now request
 the matching field as well as the identifier. Seven focused adapter tests passed,
 including a provider that rejects missing predicate fields, exact key sets and
-selected-container exclusion. These controlled tests do not establish the native
-fix until the installed app passes the same read.
+selected-container exclusion. A subsequent installed-app check passed the native warm-read path: one named
+participant was bound to the selected Contacts container, ten message rows had
+zero decoding failures, and decoded-text search found its sampled message. Two
+simultaneous MCP clients shared the app connection/cursor successfully, and the
+first remained usable after the second exited. The read-only check took 1.959
+seconds overall; private payloads were not logged.
+
+The installed app was then signed with an existing certificate identity from the
+user login keychain. Its designated requirement names the app identifier, Apple
+certificate chain and certificate subject rather than a per-build code hash.
+The installer reads the saved local certificate choice for future updates.

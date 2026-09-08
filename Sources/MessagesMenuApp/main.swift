@@ -87,8 +87,19 @@ private actor RuntimeStatusSignal {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = "Messages"
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if let button = statusItem.button {
+            let image = NSImage(systemSymbolName: "ellipsis.bubble", accessibilityDescription: "Messages Swift")!
+                .withSymbolConfiguration(.init(pointSize: 16, weight: .regular))!
+            let ratio = min(18 / image.size.width, 18 / image.size.height)
+            image.size = NSSize(width: image.size.width * ratio, height: image.size.height * ratio)
+            image.isTemplate = true
+            button.title = ""
+            button.image = image
+            button.imagePosition = .imageOnly
+            button.toolTip = "Messages Swift"
+            button.setAccessibilityLabel("Messages Swift")
+        }
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu

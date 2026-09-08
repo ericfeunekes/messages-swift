@@ -1,0 +1,73 @@
+# Requirements
+
+## Purpose
+
+Make Apple Messages usable through natural references to people and conversations. The agent receives readable names and joined context rather than assembling database identifiers, contact records and chat membership itself.
+
+The implementation is native Swift, local, lightweight and fast. It exposes typed operations primarily through stdio MCP. A CLI is a secondary adapter when useful for diagnostics or manual scripting. The [architecture](architecture.md) owns the implementation boundaries.
+
+## People and conversations
+
+- Find conversations by contact name, phone number, email address, native Messages name or a saved local alias.
+- Expand a contact to its associated handles using Contacts identity. Do not merge people merely because their display names match.
+- Return stable chat identity, readable label, native name, saved alias, participants, service, recent activity and unread information together.
+- Match conversations containing all named participants. Exact membership excludes additional participants; it is distinct from filtering individual message senders.
+- Surface ambiguous contacts and conversations as candidate matches with enough context to choose. A ranked first result is not authorization to choose a send destination.
+- Allow a user-assigned name to identify the same thread across sessions. Alias persistence is independent of the contact cache.
+- Cache contact information for approximately 100 frequently contacted people. This accelerates lookup but does not limit which people can be resolved.
+
+The proposed cache ranking, freshness policy and alias collision rules are recorded in [open decisions](decisions.md#directory-and-cache). They are not silently fixed by this document.
+
+## Reading, drafting and sending
+
+Read-only listing, filtering, searching, counts and image access have no custom per-chat approval prompts. Required macOS permissions remain in force. Reads do not mark messages as read, send read receipts or mutate conversation state.
+
+Drafting is an agent action and never invokes a send. Before any send, including a request to send an explanation, the agent presents the resolved recipients, exact content and attachment list and asks for confirmation. An affirmative reply to that preview authorizes that exact send through the client's normal auto-approval path. The agent does not add another conversational confirmation for an unchanged approved preview. Changing the recipients, content or files requires a revised preview.
+
+The assistant owns interpreting intent and showing the preview. The client owns approval of the actual invocation. The Swift operation validates its arguments and executes the requested action; it does not authenticate conversational consent or maintain a parallel approval broker. OS Automation permission is a separate boundary.
+
+A send result distinguishes an operation accepted by Messages from confirmed delivery. An uncertain result does not trigger an automatic retry, transport change or duplicate send. Text plus multiple files must not be described as atomic unless the send boundary proves that behavior. If only part succeeds, report that partial outcome.
+
+Initial sending scope is an [open release decision](decisions.md#initial-release-scope). The policy above governs every send that is exposed.
+
+Group sending targets existing conversations in the first release. Creating new groups is outside that release; this does not exclude new individual recipients.
+
+## Operations
+
+These names describe the intended operation surface. Exact input and output schemas are authored locally before implementation; they are not claimed to reproduce unpublished OpenAI schemas.
+
+| Operation | Required behavior |
+|---|---|
+| `find_chats` | Name/alias/contact resolution, participant membership, date and unread filtering, enriched results |
+| `read_messages` | One exact chat; newest-first pages, date/unread filtering and attachment metadata |
+| `search_messages` | Case-insensitive body search, conversation membership and date filters, newest-first pages |
+| `send_message` | Exactly one destination selector: stable chat identity or resolved recipients; text, local files or both, within the approved release scope |
+| `count_message_activity` | Total/sent/received counts over a date range, overall or per chat, calendar buckets and ranking |
+| `read_image` | An image attachment identified by a message result, returned in a form the agent can view |
+| `set_chat_alias` | Set, replace or remove a local name for an exact conversation; a local metadata write, not a message send |
+
+## History and search semantics
+
+- Start dates are inclusive; end dates are exclusive.
+- History and search are newest first with a deterministic tie-breaker. Continuation preserves filters and ordering, including equal timestamps and arrivals between pages.
+- Apply conversation, participant and date filters before the returned-page limit. Filtering a truncated global page is incorrect.
+- Search readable decoded body text, including messages whose plain-text field is empty. A decoding failure is not a successful blank message.
+- Preserve attachment-only messages and report attachment availability. History returns attachment metadata, not all file contents.
+- Stable chat identifiers can be reused across calls. Page-local participant and sender references are valid only within their own response, which includes the names needed to interpret them.
+- The treatment of reactions, edits, retractions, system rows and preview rows must be settled in the message model before count/search implementations depend on it. See [message interpretation](decisions.md#message-interpretation).
+
+## Activity and attachments
+
+Counts and history share one definition of a message. Counts support half-open date ranges, sent/received splits, an explicit reported time zone, Monday week boundaries and empty intervals. Resolved bounds remain stable across continuation pages. Daily totals alone cannot answer partial-day ranges.
+
+Image access resolves an attachment belonging to a message result. It is not an arbitrary filesystem reader. Missing or undownloaded attachments remain distinguishable from absent attachments. No automatic cloud fetch is required. Outgoing files are shown in the preview and validated before sending.
+
+## Scope boundaries
+
+- Intel macOS is the initial validation target. The minimum supported macOS version and Apple Silicon release coverage remain [open](decisions.md#platform-and-runtime).
+- Existing public Swift source and tests may be reused with their licenses. The implementation does not wrap the imsg CLI as its domain layer.
+- No decompilation, disassembly, proprietary binary redistribution, private-framework injection or macOS security-setting changes.
+- No requirement to edit or unsend messages, emit typing indicators/read receipts, create polls, manage accounts or provide a remote messaging bot.
+- No separate daemon, cloud service, embedded language model or general plugin framework without an accepted use case.
+
+Acceptance evidence belongs in [validation](validation.md); this document defines intended behavior, not a claim that it is already implemented.

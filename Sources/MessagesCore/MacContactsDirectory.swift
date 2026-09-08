@@ -44,7 +44,7 @@ public final class MacContactsDirectory: ContactsDirectorySource {
 
     public func allContacts(in binding: ContactsContainerBinding) throws -> [ContactPerson] {
         try validate(binding)
-        return try fetch(CNContact.predicateForContactsInContainer(withIdentifier: binding.containerID), full: true)
+        return try fetch(CNContact.predicateForContactsInContainer(withIdentifier: binding.containerID), matchingField: nil)
             .map { person($0, in: binding) }
     }
 
@@ -54,15 +54,19 @@ public final class MacContactsDirectory: ContactsDirectorySource {
         var candidates = Set(identities.filter { $0.containerID == binding.containerID }.map(\.id))
         var candidateIDsByHandle: [String: Set<String>] = [:]
         // Public Contacts predicates cannot be compounded with container scope.
-        // Read only candidate IDs until their source container has been checked.
+        // Fetch the predicate field for native matching, retaining only candidate IDs
+        // until their source container has been checked.
         for handle in wanted.sorted() {
             let predicate: NSPredicate
+            let matchingField: String
             if handle.contains("@") {
                 predicate = CNContact.predicateForContacts(matchingEmailAddress: handle)
+                matchingField = CNContactEmailAddressesKey
             } else {
                 predicate = CNContact.predicateForContacts(matching: CNPhoneNumber(stringValue: handle))
+                matchingField = CNContactPhoneNumbersKey
             }
-            let ids = Set(try fetch(predicate, full: false).map(\.identifier))
+            let ids = Set(try fetch(predicate, matchingField: matchingField).map(\.identifier))
             candidateIDsByHandle[handle] = ids
             candidates.formUnion(ids)
         }
@@ -73,7 +77,7 @@ public final class MacContactsDirectory: ContactsDirectorySource {
         }
         guard !selected.isEmpty else { return ContactLookup(people: [], unresolvedHandles: wanted, candidatesByHandle: Dictionary(uniqueKeysWithValues: wanted.map { ($0, []) })) }
         let selectedIDs = Set(selected)
-        let people = try fetch(CNContact.predicateForContacts(withIdentifiers: selected), full: true)
+        let people = try fetch(CNContact.predicateForContacts(withIdentifiers: selected), matchingField: nil)
             .filter { selectedIDs.contains($0.identifier) }
             .map { person($0, in: binding) }
         var unresolved: Set<String> = []
@@ -92,10 +96,10 @@ public final class MacContactsDirectory: ContactsDirectorySource {
         guard containers.contains(binding.containerID) else { throw ContactsDirectoryError.selectedContainerMissing(binding.containerID) }
     }
 
-    private func fetch(_ predicate: NSPredicate, full: Bool) throws -> [CNContact] {
-        let fields = full ? [CNContactIdentifierKey, CNContactGivenNameKey, CNContactMiddleNameKey,
+    private func fetch(_ predicate: NSPredicate, matchingField: String?) throws -> [CNContact] {
+        let fields = matchingField.map { [CNContactIdentifierKey, $0] } ?? [CNContactIdentifierKey, CNContactGivenNameKey, CNContactMiddleNameKey,
                             CNContactFamilyNameKey, CNContactOrganizationNameKey,
-                            CNContactPhoneNumbersKey, CNContactEmailAddressesKey] : [CNContactIdentifierKey]
+                            CNContactPhoneNumbersKey, CNContactEmailAddressesKey]
         let request = CNContactFetchRequest(keysToFetch: fields.map { $0 as CNKeyDescriptor })
         request.predicate = predicate
         request.unifyResults = false

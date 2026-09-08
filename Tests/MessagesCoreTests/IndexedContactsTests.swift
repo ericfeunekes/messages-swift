@@ -7,7 +7,7 @@ import XCTest
 final class IndexedContactsTests: XCTestCase, @unchecked Sendable {
     private let binding = ContactsContainerBinding(containerID: "selected")
 
-    func testCandidateIDsAreScopedBeforeFieldsAndAllSelectedOwnersSurvive() throws {
+    func testCandidateIDsAreScopedBeforePersonFieldsAndAllSelectedOwnersSurvive() throws {
         let first = contact("One", email: "shared@example.invalid")
         let second = contact("Two", email: "SHARED@example.invalid")
         let foreign = contact("Foreign", email: "shared@example.invalid")
@@ -21,7 +21,7 @@ final class IndexedContactsTests: XCTestCase, @unchecked Sendable {
         let lookup = try MacContactsDirectory(source: source).contacts(in: binding, identities: [], matchingHandles: ["shared@example.invalid"])
         XCTAssertEqual(Set(lookup.people.map(\.displayName)), ["One", "Two"])
         XCTAssertEqual(lookup.unresolvedHandles, ["shared@example.invalid"])
-        XCTAssertEqual(source.events, ["container", "ids", "container", "container", "container", "container", "fields"])
+        XCTAssertEqual(source.events, ["container", "matching", "container", "container", "container", "container", "fields"])
         XCTAssertEqual(source.requests.count, 2)
         XCTAssertEqual(source.requests[0].predicate, CNContact.predicateForContacts(matchingEmailAddress: "shared@example.invalid"))
         XCTAssertEqual(source.requests[1].predicate, CNContact.predicateForContacts(withIdentifiers: [first.identifier, second.identifier].sorted()))
@@ -29,8 +29,8 @@ final class IndexedContactsTests: XCTestCase, @unchecked Sendable {
         for (index, candidate) in candidates.sorted(by: { $0.identifier < $1.identifier }).enumerated() {
             XCTAssertEqual(source.containerLookups[index + 1], .owningContact(candidate.identifier))
         }
-        XCTAssertEqual(source.requests[0].keysToFetch.count, 1)
-        XCTAssertEqual(source.requests[0].keysToFetch.first as? String, CNContactIdentifierKey)
+        XCTAssertEqual(source.requests[0].keysToFetch.compactMap { $0 as? String }, [CNContactIdentifierKey, CNContactEmailAddressesKey])
+        XCTAssertEqual(Set(lookup.candidatesByHandle["shared@example.invalid", default: []].map(\.displayName)), ["One", "Two"])
         XCTAssertTrue(source.requests.allSatisfy { !$0.unifyResults && $0.predicate != nil })
     }
 
@@ -42,6 +42,7 @@ final class IndexedContactsTests: XCTestCase, @unchecked Sendable {
         let lookup = try MacContactsDirectory(source: source).contacts(in: binding, identities: [], matchingHandles: ["+1 (555) 555-0123"])
         XCTAssertEqual(lookup.people.map(\.displayName), ["Approximate"])
         XCTAssertEqual(lookup.people.first?.handles, ["5555550123"])
+        XCTAssertEqual(source.requests[0].keysToFetch.compactMap { $0 as? String }, [CNContactIdentifierKey, CNContactPhoneNumbersKey])
         XCTAssertEqual(lookup.unresolvedHandles, ["+15555550123"])
         XCTAssertEqual(lookup.candidatesByHandle["+15555550123"]?.first?.displayName, "Approximate")
         let empty = FakeStore()
@@ -49,7 +50,7 @@ final class IndexedContactsTests: XCTestCase, @unchecked Sendable {
         empty.contactResults = [[]]
         let noMatch = try MacContactsDirectory(source: empty).contacts(in: binding, identities: [], matchingHandles: ["+15555550123"])
         XCTAssertEqual(noMatch.unresolvedHandles, ["+15555550123"])
-        XCTAssertEqual(empty.events, ["container", "ids"])
+        XCTAssertEqual(empty.events, ["container", "matching"])
     }
 
     func testIdentityRefreshChecksMembershipWithoutHandleSearch() throws {
@@ -172,7 +173,14 @@ final class IndexedContactsTests: XCTestCase, @unchecked Sendable {
         }
         func contacts(matching request: CNContactFetchRequest) throws -> [CNContact] {
             requests.append(request)
-            events.append(request.keysToFetch.count == 1 ? "ids" : "fields")
+            let keys = request.keysToFetch.compactMap { $0 as? String }
+            if request.predicate == CNContact.predicateForContacts(matchingEmailAddress: "shared@example.invalid"), !keys.contains(CNContactEmailAddressesKey) {
+                throw NSError(domain: CNErrorDomain, code: 2)
+            }
+            if request.predicate == CNContact.predicateForContacts(matching: CNPhoneNumber(stringValue: "+15555550123")), !keys.contains(CNContactPhoneNumbersKey) {
+                throw NSError(domain: CNErrorDomain, code: 2)
+            }
+            events.append(keys.contains(CNContactGivenNameKey) ? "fields" : "matching")
             return contactResults.removeFirst()
         }
     }

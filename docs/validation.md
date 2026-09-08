@@ -37,7 +37,7 @@ The final policy experiment used the same evaluator, fixture, queries, indexes a
 
 Separate probes found common-match limit-50 searches in roughly 2–4 ms with the ordering index and 0.3–0.5 seconds without it on the text-first implementation. A reject-heavy final-matcher probe scaled from approximately 2.3 ms at 1,000 graphemes to 39.8 ms at 16,000. These do not replace the frozen evaluator or establish a universal worst-case bound. A WAL probe confirmed that an active read statement and its nested read see a consistent pre-commit snapshot until the statement ends; long-reader WAL retention and live contention remain unmeasured.
 
-The source adaptation and policy tests remain preparatory artifacts. Production adoption requires the matching-policy decision in [open decisions](decisions.md#search-matching-policy), integration tests and the remaining live boundaries. The underlying baseline still needs the separately specified explicit decoding-failure model.
+The source adaptation and policy tests remain preparatory artifacts. The owner has accepted the matching policy recorded in [decisions](decisions.md#search-matching-policy). Production adoption still requires implementation, integration tests and the remaining live boundaries. The underlying baseline still needs the separately specified explicit decoding-failure model.
 
 ## Source and fixture policy
 

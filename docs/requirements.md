@@ -9,7 +9,7 @@ The implementation is native Swift, local, lightweight and fast. It exposes type
 ## People and conversations
 
 - Find conversations by contact name, phone number, email address, native Messages name or a saved local alias.
-- Google Contacts associated with the user’s selected Gmail account is the intended authoritative contact directory. The local cache is derived data, not a second contact-maintenance system.
+- Google Contacts associated with the user’s selected Gmail account is the authoritative upstream directory. Access its selected macOS Contacts container using existing system synchronization; do not build a direct Google connection. The local cache is derived data, not a second contact-maintenance system.
 - Expand a contact to its associated handles using source identity. Do not merge people merely because their display names match. The access adapter must preserve the selected account boundary.
 - Return stable chat identity, readable label, native name, saved alias, participants, service, recent activity and unread information together.
 - Match conversations containing all named participants. Exact membership excludes additional participants; it is distinct from filtering individual message senders.
@@ -54,6 +54,7 @@ These names describe the intended operation surface. Exact input and output sche
 - History and search are newest first with a deterministic tie-breaker. Continuation preserves filters and ordering, including equal timestamps and arrivals between pages.
 - Apply conversation, participant and date filters before the returned-page limit. Filtering a truncated global page is incorrect.
 - Search readable decoded body text, including messages whose plain-text field is empty. A decoding failure is not a successful blank message.
+- Case-insensitive substring matching respects canonical equivalence and whole Swift Character boundaries. Do not match a component inside a combined letter or emoji; continue past rejected partial matches to find later valid matches. Use the tested native-matcher direction without a persistent body index.
 - Preserve attachment-only messages and report attachment availability. History returns attachment metadata, not all file contents.
 - Stable chat identifiers can be reused across calls. Page-local participant and sender references are valid only within their own response, which includes the names needed to interpret them.
 - The treatment of reactions, edits, retractions, system rows and preview rows must be settled in the message model before count/search implementations depend on it. See [message interpretation](decisions.md#message-interpretation).

@@ -4,7 +4,7 @@ This is the register of unresolved requirements and design choices. It separates
 
 ## Repository and license
 
-- **Working name:** `messages-swift`; confirmation requested. Naming does not affect the operation contract.
+- **Repository:** `messages-swift`.
 - **Owner and visibility:** personal GitHub account `ericfeunekes`, public; authorized.
 - **License:** MIT; selected by the owner. Reused third-party components retain their own applicable notices.
 
@@ -17,7 +17,7 @@ This is the register of unresolved requirements and design choices. It separates
 ## Directory and cache
 
 - **Contact authority:** Google Contacts associated with the user’s Gmail account; selected by the owner. The account identifier belongs in private setup, not public documentation.
-- **Contact access:** source research supports proving a user-selected Google-backed macOS Contacts container first if ordinary Google-to-Mac sync freshness is acceptable. That freshness choice is with the owner. Fetch non-unified records from the selected container; do not infer a Google login from its display label. Direct People API remains the alternative when reads must be independent of Mac sync. Google server-side contact IDs are not required for a disposable single-Mac cache. Actual container isolation and lookup costs still need runtime proof. Contact cleanup/migration remains separate.
+- **Contact access:** use a user-selected Google-backed macOS Contacts container and existing Google-to-Mac synchronization; accepted by the owner. Fetch non-unified records from that container and do not infer account ownership from its display label. Do not build a direct Google API/OAuth connection. Google server-side IDs are unnecessary for this disposable single-Mac cache. Actual container isolation, permissions and lookup costs remain integration checks. Contact cleanup/migration remains separate.
 
 - **People cache:** approximately 100 entries with FIFO eviction; selected by the owner. The accepted initial directory baseline uses frequent contacts over 90 days, including group participation. After population, newly used people enter the cache and the earliest-added entry is evicted when full. Working interpretation: refreshing an existing record does not reset its FIFO position.
 - **Freshness:** refresh daily or when a contact is used by an operation such as read or send, whichever is sooner; selected by the owner. Daily scheduling while the server runs and overdue refresh on startup are the proposed execution details; no separate daemon.
@@ -38,7 +38,7 @@ Define how history, search and counts treat reaction events, edited/retracted me
 
 The owner requested continued decoded-search diagnosis. Profiling found that matching dominated decoding. Preserving the existing matcher reaches approximately 5.3–5.4 seconds on the fixed workload; a native matcher with whole Swift Character boundaries reaches approximately 1.1 seconds and fixes an isolated false match. See [validation](validation.md#search-profiling-and-matching-policy-experiment).
 
-Proposed contract: case-insensitive, canonically equivalent substring matching that begins and ends at whole Swift Character boundaries. Combined letters and emoji are not split, and a rejected partial match must not prevent finding a later valid one. Exact mode remains full-string comparison. The alternative is ordinary native component-substring matching. Owner choice was requested; neither prototype silently changes production behavior. Matching every accidental result of the old Foundation path is not the project's goal.
+Accepted contract: case-insensitive, canonically equivalent substring matching that begins and ends at whole Swift Character boundaries. Combined letters and emoji are not split, and a rejected partial match must not prevent finding a later valid one. Exact mode remains full-string comparison. The owner accepted this faster matching rule. Preserve its tests when implementing; do not reproduce the demonstrated false match from the old Foundation path.
 
 ## Performance
 
@@ -48,7 +48,7 @@ Proposed initial targets on the Intel reference machine:
 - one filtered history page: p95 below 500 ms;
 - no-match decoded-body search over a controlled 100,000-message fixture: below 5 seconds.
 
-The continued investigation supersedes the earlier six-second/indexing tradeoff. The preferred matching-policy prototype completes the unchanged controlled workload in 1.098–1.138 seconds without an index and passes the proposed five-second bound under that explicit policy. The old-matcher-preserving path remains above five seconds. The recommendation is to adopt the tested matching rule, retain no persistent body index, and measure representative integrated usage. See [validation](validation.md#search-profiling-and-matching-policy-experiment) for limits; no policy acceptance or production-performance claim is implied.
+The continued investigation supersedes the earlier six-second/indexing tradeoff. The preferred matching-policy prototype completes the unchanged controlled workload in 1.098–1.138 seconds without an index and passes the proposed five-second bound under that explicit policy. The old-matcher-preserving path remains above five seconds. The owner accepted the tested matching rule and the no-index approach. Measure representative integrated usage before making production-performance claims. See [validation](validation.md#search-profiling-and-matching-policy-experiment) for the prototype evidence and its limits.
 
 ## Requirements completion
 

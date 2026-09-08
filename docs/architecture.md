@@ -12,7 +12,7 @@ flowchart TD
     Operations --> History[Message queries and decoding]
     Operations --> Send[Messages send integration]
     Operations --> Images[Native image reader]
-    Directory --> Contacts[Selected Google Contacts account adapter]
+    Directory --> Contacts[Selected macOS Contacts container]
     Directory --> State[Contact cache and saved aliases]
     Directory --> DB[Messages database: read only]
     History --> DB
@@ -26,7 +26,7 @@ Use the official Swift MCP SDK for the adapter after verifying compatible pinned
 
 ## Conversation directory
 
-The directory joins chat records with names from the selected Google Contacts account and local thread aliases before returning results. Google Contacts is the intended authority; macOS Contacts is a possible access layer when it faithfully exposes that account, not an additional authority. The proposed display-label order is saved alias, native thread name, then participant names; native name and participants remain visible alongside the label.
+The directory joins chat records with names from the selected Google Contacts account and local thread aliases before returning results. Google Contacts is the upstream authority; its user-selected macOS Contacts container is the accepted access layer, using normal system synchronization. The proposed display-label order is saved alias, native thread name, then participant names; native name and participants remain visible alongside the label.
 
 Person lookup expands contact handles; conversation lookup matches membership. A request for a conversation with a person must include the other participants' messages, not only rows sent by that person. Missing and ambiguous names are distinct results.
 
@@ -36,11 +36,11 @@ A small local SQLite store is the proposed persistence mechanism. Its installati
 
 Cache data supports discovery and display. Resolve the current destination and participants before presenting a send preview. A cached label alone is not a write destination.
 
-The smaller local access candidate uses a user-confirmed Google-backed Contacts container with non-unified fetches and device-local contact IDs. The public container API does not prove the Google login behind a display label, so selection is an explicit setup action. Cache refresh then reads the Mac’s synchronized values; it does not force an upstream Google sync. This is acceptable only if the owner accepts ordinary sync freshness. Google server IDs are not necessary for this local cache. A missing container requires reselection rather than silent rebinding. Source-isolation and lookup performance remain untested.
+Use a user-confirmed Google-backed Contacts container with non-unified fetches and device-local contact IDs. The public container API does not prove the Google login behind a display label, so selection is an explicit setup action. Cache refresh reads the Mac’s synchronized values; it does not force an upstream Google sync. The owner accepts ordinary sync freshness. Google server IDs and a direct Google connection are not needed. A missing container requires reselection rather than silent rebinding. Source-isolation and lookup performance remain integration checks.
 
 ## Message integration and upstream reuse
 
-Open Apple's Messages database read-only. Resolve contact names from the selected Google Contacts account, either through correctly scoped macOS synchronization or a direct Google adapter; that access choice remains open. Use the public Messages scripting surface for supported sends. Initial OS permission setup is separate from the conversational approval policy in [requirements](requirements.md#reading-drafting-and-sending).
+Open Apple's Messages database read-only. Resolve contact names through the selected Google-backed macOS Contacts container and existing synchronization. No direct Google adapter or OAuth setup is part of this implementation. Use the public Messages scripting surface for supported sends. Initial OS permission setup is separate from the conversational approval policy in [requirements](requirements.md#reading-drafting-and-sending).
 
 The reviewed imsg source exposes an in-process `IMsgCore` library and x86_64 builds. Its decoding, schema and attachment code and tests are useful references. Reuse only the needed public components; do not enable its injected helper or private-framework operations.
 

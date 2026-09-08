@@ -87,12 +87,26 @@ macOS still requires the user's permission. Signing does not grant access.
 Launch the app normally through Finder or `open`; invoking its nested executable
 from Codex does not establish an independent permission identity on the tested Mac.
 
-Use the Messages menu to request Contacts access, open Settings, select the
-already-synchronized account, and save. Selection is explicit: a container display
+Settings shows Contacts permission and Messages database readability together.
+The window opens on launch when required access or a source selection is missing.
+Choose Set Up Permissions to request Contacts access through the native async API
+and open the appropriate System Settings pane for missing access. Full Disk
+Access requires a manual user grant: the app opens that pane and reveals itself
+in Finder so it can be added if absent. The file check reports readability,
+permission denial, missing files or other failures; it does not assert a global
+Full Disk Access grant or replace the runtime's SQLite/schema validation.
+
+Check Again and returning from System Settings refresh the displayed status
+without requesting permission again or repeatedly opening settings panes.
+Concurrent setup clicks share one pending Contacts request. Denied Contacts
+access routes to its settings pane; restricted access is explained. Select the
+already-synchronized account and save. Selection is explicit: a container display
 name does not establish Google account ownership. A saved source change takes
-effect after quitting and reopening the app. Grant the app Full Disk Access in
-System Settings if macOS denies access to Messages. No account, synchronization,
-privacy database or client signature is changed by the installer.
+effect after quitting and reopening the app. Existing failed/active runtimes are
+not replaced by overlapping state writers. No account, synchronization, privacy
+database or client signature is changed by setup. This reading build requires
+Contacts and Messages file access; other permissions belong to the features that
+actually require them.
 
 Settings saves private configuration at
 `~/Library/Application Support/messages-swift/config.json`. The required

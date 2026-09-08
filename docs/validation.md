@@ -203,5 +203,27 @@ Codex-child requests were denied because macOS attributed them to Codex's identi
 The successful probe establishes the app-owned consent direction. The installed
 production app has a different identity and requires its own live Contacts and
 Messages access checks, selected-container confirmation and client discovery.
-Permission persistence across ad-hoc signed updates remains untested. Sending,
+The locally rebuilt ad-hoc signed app has requested Contacts consent again after an update; grant persistence must not be assumed. Sending,
 counts and image access remain outside this foundation installation.
+
+## Permission setup controller
+
+The permission tests import the actual menu app and construct its AppKit settings
+window and controls. Injected async permission requests resume from a detached
+task; granted, denied and error outcomes have distinct UI assertions, including
+retry after error. Repeated setup clicks produce one pending request. Launch,
+Check Again and app activation exercise window reuse, visible status updates,
+configured/default database-path routing and absence of repeated prompts or
+settings launches. Saved source and custom paths survive refresh and failed
+source enumeration. Real temporary-file checks include readable, missing,
+directory and chmod-000 denial cases; controlled errno values cover classification.
+Suppressing first-launch setup presentation made its owning test fail, then the
+source was restored. These tests do not automate macOS consent or substitute for
+live grants under the installed app identity.
+
+The installed unified setup window was captured and inspected on the target Mac.
+Contacts and Messages access status, setup/settings actions, source controls and
+Check Again were visible without clipping. At that check the rebuilt app reported
+Contacts not requested and Messages access denied; real consent and the final
+end-to-end read remained pending user action. The synthetic suite passed 51 XCTest
+and 37 Swift Testing tests.

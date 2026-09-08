@@ -1,0 +1,114 @@
+import Foundation
+import MCP
+import MessagesCore
+
+public enum MCPServerRunner {
+    public static func run(operations: MessagesOperations) async throws {
+        let server = Server(name: "messages-swift", version: "0.1.0", instructions: "Read and search local Messages with selected Contacts names. Ambiguous contacts require a choice. This slice exposes local aliases but no send, count or image operation. Decoding diagnostics mean search coverage is incomplete. Never interpret a cached label as a send destination.", capabilities: .init(tools: .init()))
+        let tools = ToolSchemas.tools
+        await server.withMethodHandler(ListTools.self) { _ in .init(tools: tools) }
+        await server.withMethodHandler(CallTool.self) { params in
+            guard let tool = tools.first(where: { $0.name == params.name }) else {
+                throw MCPError.invalidParams("Unknown tool")
+            }
+            let arguments = Value.object(params.arguments ?? [:])
+            try ToolSchemas.validate(arguments, against: tool.inputSchema)
+            var fields = params.arguments ?? [:]
+            if params.name != "set_chat_alias" {
+                fields["dateRange"] = fields["dateRange"] ?? .object([:])
+                fields["unreadOnly"] = fields["unreadOnly"] ?? false
+                fields["limit"] = fields["limit"] ?? 50
+            }
+            if params.name == "find_chats" || params.name == "search_messages" {
+                fields["participants"] = fields["participants"] ?? .array([])
+                fields["membership"] = fields["membership"] ?? "contains_all"
+            }
+            let data = try JSONEncoder().encode(Value.object(fields))
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .custom { decoder in
+                let value = try decoder.singleValueContainer().decode(String.self)
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                if let date = formatter.date(from: value) { return date }
+                formatter.formatOptions = [.withInternetDateTime]
+                guard let date = formatter.date(from: value) else {
+                    throw MCPError.invalidParams("Dates must be ISO-8601 strings with an offset")
+                }
+                return date
+            }
+            do {
+                switch params.name {
+                case "find_chats":
+                    return try encode(await operations.findChats(decoder.decode(FindChatsInput.self, from: data)))
+                case "read_messages":
+                    return try encode(await operations.readMessages(decoder.decode(ReadMessagesInput.self, from: data)))
+                case "search_messages":
+                    return try encode(await operations.searchMessages(decoder.decode(SearchMessagesInput.self, from: data)))
+                default:
+                    return try encode(await operations.setChatAlias(decoder.decode(SetChatAliasInput.self, from: data)))
+                }
+            } catch let error as MCPError { throw error }
+            catch is DecodingError { throw MCPError.invalidParams("Arguments do not match the typed operation schema") }
+            catch {
+                let conflicts: [String]?
+                if case LocalStateError.aliasAlreadyUsed(_, let chatIDs) = error { conflicts = chatIDs }
+                else { conflicts = nil }
+                return try encode(DomainFailure(error: .init(code: domainCode(error), chatIDs: conflicts)), isError: true)
+            }
+        }
+        try await server.start(transport: StdioTransport())
+        await server.waitUntilCompleted()
+    }
+
+    private static func encode<T: Encodable>(_ object: T, isError: Bool = false) throws -> CallTool.Result {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(object)
+        let value = try JSONDecoder().decode(Value.self, from: data)
+        return try .init(content: [.text(text: String(decoding: data, as: UTF8.self), annotations: nil, _meta: nil)], structuredContent: value, isError: isError)
+    }
+
+    private static func domainCode(_ error: Error) -> String {
+        // Each domain owns its errors; never emit raw errors containing paths or private values.
+        if let error = error as? ContactsDirectoryError {
+            switch error {
+            case .permissionNotGranted: return "contacts_permission_not_granted"
+            case .selectedContainerMissing: return "selected_contacts_container_missing"
+            }
+        }
+        if let error = error as? LocalStateError {
+            switch error {
+            case .aliasAlreadyUsed: return "alias_already_used"
+            case .unsupportedStateVersion: return "unsupported_state_version"
+            case .duplicateCachedContactIdentity: return "duplicate_cached_contact_identity"
+            }
+        }
+        if let error = error as? OperationError {
+            switch error {
+            case .unknownChat: return "chat_not_found"
+            case .invalidLimit: return "invalid_limit"
+            case .invalidCursor: return "invalid_cursor"
+            case .invalidSelector: return "invalid_selector"
+            case .contactNotFound: return "contact_not_found"
+            case .invalidDirectory: return "invalid_directory"
+            case .invalidQuery: return "invalid_query"
+            }
+        }
+        if let error = error as? MessageStoreError {
+            switch error {
+            case .invalidLimit: return "invalid_limit"
+            case .invalidDateRange: return "invalid_date_range"
+            case .cursorFilterMismatch: return "cursor_mismatch"
+            case .missingSchema: return "unsupported_database_schema"
+            case .sqlite: return "database_error"
+            }
+        }
+        return "operation_failed"
+    }
+}
+
+private struct DomainFailure: Encodable {
+    struct Detail: Encodable { let code: String; let chatIDs: [String]? }
+    let error: Detail
+}

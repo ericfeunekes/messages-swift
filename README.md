@@ -4,7 +4,7 @@ Native Swift access to Apple Messages for agents, with readable conversation nam
 
 The primary interface is a local stdio MCP server over shared Swift operations. A diagnostic CLI can use those same operations when needed. Intel macOS is the initial validation target.
 
-This repository currently contains the requirements and design. There is no installable implementation yet.
+The first implementation slice provides conversation finding, reading, decoded-body search and durable local aliases. Sending, activity counts and image access remain required for the first release and are not registered as placeholder tools.
 
 ## Intended experience
 
@@ -20,6 +20,7 @@ The design is informed by OpenAI's observed Messages tool behavior and the publi
 
 - [Requirements](docs/requirements.md): intended behavior and scope.
 - [Architecture](docs/architecture.md): shared Swift operations, MCP, state and integration boundaries.
+- [Local schemas](docs/schemas.md): typed operations, filters and result interpretation.
 - [Validation](docs/validation.md): the evidence required before claiming a capability works.
 - [Open decisions](docs/decisions.md): unresolved product choices and engineering questions.
 - [References](docs/references.md): source provenance and limits of the research.
@@ -29,10 +30,18 @@ The design is informed by OpenAI's observed Messages tool behavior and the publi
 
 Keep changes tied to the requirements. Resolve a blocking product decision before implementing its dependent behavior. Define the typed operation contract before adding an adapter, and test at the integration boundary being changed.
 
-Build, test and installation commands will be documented when the executable exists. No public claim of runtime compatibility is based only on the current source review.
+Build with Swift 6.1 or later on macOS:
+
+```sh
+swift build --product messages-mcp
+swift test
+```
+
+Run `.build/debug/messages-mcp --config /absolute/path/to/private-config.json`.
+The [runtime setup](docs/architecture.md#runtime-setup) describes the private configuration and permission boundaries. [Validation](docs/validation.md#implementation-commands) includes the synthetic MCP test commands. Native Intel is the tested architecture; the declared macOS 14 floor and Apple Silicon remain untested.
 
 ## Privacy and licensing
 
 Real messages, contacts, attachment files, aliases and runtime databases stay outside this repository. Test data must be synthetic or explicitly redistributable. See the [reference rules](docs/references.md#source-and-data-boundaries).
 
-Licensed under [MIT](LICENSE). No third-party implementation code is included in this initial documentation commit; reused components will retain their applicable notices.
+Licensed under [MIT](LICENSE). The narrowly adapted public imsg parser and query references retain [MIT attribution](THIRD_PARTY_NOTICES.md). The official Swift MCP SDK is pinned to 0.12.1 with its resolved dependency graph.

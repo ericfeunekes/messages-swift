@@ -19,10 +19,10 @@ This is the register of unresolved requirements and design choices. It separates
 - **Contact authority:** Google Contacts associated with the user’s Gmail account; selected by the owner. The account identifier belongs in private setup, not public documentation.
 - **Contact access:** use a user-selected Google-backed macOS Contacts container and existing Google-to-Mac synchronization; accepted by the owner. Fetch non-unified records from that container and do not infer account ownership from its display label. Do not build a direct Google API/OAuth connection. Google server-side IDs are unnecessary for this disposable single-Mac cache. Actual container isolation, permissions and lookup costs remain integration checks. Contact cleanup/migration remains separate.
 
-- **People cache:** approximately 100 entries with FIFO eviction; selected by the owner. The accepted initial directory baseline uses frequent contacts over 90 days, including group participation. After population, newly used people enter the cache and the earliest-added entry is evicted when full. Working interpretation: refreshing an existing record does not reset its FIFO position.
-- **Freshness:** refresh daily or when a contact is used by an operation such as read or send, whichever is sooner; selected by the owner. Daily scheduling while the server runs and overdue refresh on startup are the proposed execution details; no separate daemon.
-- **Aliases:** local to this Mac; selected by the owner. They are durable independently of the people cache and do not rename Messages threads. Proposed normalized collisions require explicit replacement or disambiguation.
-- **Storage location:** choose one conventional macOS application-support location outside the checkout, separating durable aliases from replaceable contact cache data. Exact path and permissions are an engineering choice to record before installation.
+- **People cache:** approximately 100 entries with FIFO eviction; selected by the owner. The accepted initial directory baseline uses frequent contacts over 90 days, including group participation. After population, newly used people enter the cache and the earliest-added entry is evicted when full. Accepted interpretation: refreshing an existing record does not reset its FIFO position.
+- **Freshness:** refresh daily or when a contact is used by an operation such as read or send, whichever is sooner; selected by the owner. Daily scheduling while the server runs and overdue refresh on startup are the accepted execution details; no separate daemon.
+- **Aliases:** local to this Mac; selected by the owner. They are durable independently of the people cache and do not rename Messages threads. Normalized collisions return the conflicting conversation IDs; replacing an alias affects only its exact conversation.
+- **Storage location:** choose one conventional macOS application-support location outside the checkout, separating durable aliases from replaceable contact cache data. The implementation uses Application Support/messages-swift, separate atomic JSON documents, a 0700 new directory and 0600 state files; see architecture.
 
 ## Platform and runtime
 
@@ -32,7 +32,9 @@ This is the register of unresolved requirements and design choices. It separates
 
 ## Message interpretation
 
-Define how history, search and counts treat reaction events, edited/retracted messages, system rows and URL-preview rows. They must share one consistent message model. OpenAI's exact internal rules are unknown. Use public fixtures and visible behavior to choose a clear local contract.
+History/search retain ordinary and attachment-only rows as messages and separate reaction, preview and unknown rows as typed events. Missing classification columns mean unknown. Edited/retracted markers are orthogonal source state. No heuristic preview coalescing or original-text reconstruction occurs. The exact response is in [schemas](schemas.md).
+
+Activity counting remains open: propose a shared logical normalizer counting ordinary and attachment-only user messages once, attaching only proven reactions, and explicitly deciding tombstone/system/unknown treatment. Physical page length is not the counting rule. Sending, counts and production image access remain required release work.
 
 ## Search matching policy
 

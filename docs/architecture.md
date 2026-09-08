@@ -26,13 +26,13 @@ Use the official Swift MCP SDK for the adapter after verifying compatible pinned
 
 ## Conversation directory
 
-The directory joins chat records with names from the selected Google Contacts account and local thread aliases before returning results. Google Contacts is the upstream authority; its user-selected macOS Contacts container is the accepted access layer, using normal system synchronization. The proposed display-label order is saved alias, native thread name, then participant names; native name and participants remain visible alongside the label.
+The directory joins chat records with names from the selected Google Contacts account and local thread aliases before returning results. Google Contacts is the upstream authority; its user-selected macOS Contacts container is the accepted access layer, using normal system synchronization. The display-label order is saved alias, native thread name, then participant names; native name and participants remain visible alongside the label.
 
 Person lookup expands contact handles; conversation lookup matches membership. A request for a conversation with a person must include the other participants' messages, not only rows sent by that person. Missing and ambiguous names are distinct results.
 
 Keep aliases as durable user-owned records associated with stable chat identity. Contact information and frequent-contact rankings are disposable cache data. Cache refresh must not delete aliases or undo a just-written alias. A missing chat must not cause its alias to bind silently to another thread.
 
-A small local SQLite store is the proposed persistence mechanism. Its installation path, cache ranking and invalidation contract are resolved in [open decisions](decisions.md). Keep runtime state outside the repository. Do not inject the complete directory into each model prompt; return the relevant enriched records.
+Two atomic JSON files hold local state: contacts.json contains the disposable FIFO cache, and aliases.json contains GUID-keyed user aliases. Their versioned schemas and private path are described below. Keep runtime state outside the repository. Do not inject the complete directory into each model prompt; return the relevant enriched records.
 
 Cache data supports discovery and display. Resolve the current destination and participants before presenting a send preview. A cached label alone is not a write destination.
 
@@ -64,4 +64,69 @@ Verify the normal host flow with an inert operation before enabling real sends. 
 
 The tested search direction is one streaming scan, shared searchable-text resolution before full record construction, and native Foundation matching under an explicit whole-Character policy. Profiling identified case-insensitive matching as the dominant remaining cost; attributed-body parsing was a small fraction. The preferred policy prototype completes the controlled 100,000-message workload in about 1.1 seconds without a persistent body index. It corrects a reproduced false match in the old path and is not certified bug-for-bug equivalent. The [matching-policy decision](decisions.md#search-matching-policy) remains explicit; [validation](validation.md#search-profiling-and-matching-policy-experiment) records tests, timings and limits. Production code still needs the shared message model, source integration and live verification.
 
-The people cache uses FIFO eviction and refreshes records daily or on use, whichever is sooner. Refresh and eviction order are separate: an existing record's refresh does not move it to the back of the queue under the proposed interpretation. Keep user aliases immediately consistent and independent of cache refresh/eviction. A process may retain hot lookups while connected to MCP, but persistence must also work across process restarts. Daily refresh while active and overdue refresh at startup avoid requiring a separate daemon.
+The people cache uses FIFO eviction and refreshes records daily or on use, whichever is sooner. Refresh and eviction order are separate: an existing record's refresh does not move it to the back of the queue under the accepted interpretation. Keep user aliases immediately consistent and independent of cache refresh/eviction. A process may retain hot lookups while connected to MCP, but persistence must also work across process restarts. Daily refresh while active and overdue refresh at startup avoid requiring a separate daemon.
+
+## Runtime setup
+
+The package has a shared `MessagesCore` library, a thin `MessagesMCPAdapter`, and
+one `messages-mcp` executable. It links the system SQLite library and the pinned
+official Swift MCP SDK 0.12.1. `MCPTestServer` is a separate synthetic test target;
+production has no fixture flag, send stub or private helper.
+
+Create a private JSON configuration outside the repository:
+
+```json
+{
+  "containerID": "USER-CONFIRMED-DEVICE-LOCAL-CONTAINER-ID"
+}
+```
+
+The selected container must already be synchronized with the intended Google
+account and explicitly confirmed by the user. A container display name does not
+prove account ownership. This executable checks existing Contacts authorization;
+it does not request it or change account, sync or security settings. Authorizing
+the final executable/host and obtaining the selected container ID are live setup
+steps still requiring validation. Do not put actual IDs in public configuration.
+
+Optional absolute `databasePath` and `stateDirectory` values override
+`~/Library/Messages/chat.db` and `~/Library/Application Support/messages-swift`.
+Unknown keys and relative paths are rejected. Run:
+
+```sh
+.build/debug/messages-mcp --config /absolute/path/to/private-config.json
+```
+
+Stdout carries MCP only. Startup errors and background-refresh failures use
+sanitized stderr messages. The MCP [operation schemas](schemas.md) own the wire
+contract. Reads never open the Messages database for writing.
+
+`contacts.json` is version 1 with `containerID`, `isSeeded` and FIFO `entries`;
+each entry carries `person` (source identity, display name, handles), `admittedAt`
+and `refreshedAt`. `aliases.json` is version 1 with a `chat.guid`-to-name map.
+Internal dates use Foundation's Codable reference-date seconds. Cache replacement
+or source reselection does not replace the alias file. Unsupported versions and
+malformed state fail rather than being silently reset. New state directories use
+0700 and state files 0600. Use one active server per state directory; concurrent
+process writers are not supported by this slice.
+
+First population ranks the selected source's people by interactions in their
+conversations over the preceding 90 days, including group participants. Later
+admission evicts the earliest entry at 100 people. Refresh does not move existing
+entries. Operations batch used-contact writes. Warm history reads use cached
+handle-to-source identities to request current selected contacts; missing or
+changed handles trigger full selected-source discovery. Find and search use
+complete transient discovery so cache capacity cannot exclude people. The native
+adapter keeps container scoping and non-unified enumeration for selective reads,
+materializing requested identities and all matching-handle owners so an uncached duplicate cannot appear uniquely resolved. Identity-only daily refresh can stop once its requested records are found. This is not a forced Google sync.
+
+On startup and once per minute while active, the server checks for contacts from
+an earlier local calendar day and refreshes them. Every use refreshes the selected
+contact's synchronized values even within the same day. Failed refreshes do not
+mark records fresh. The process owns this schedule; there is no daemon.
+
+Message cursors retain exact source nanoseconds, descending row coordinates,
+filters, search query and an insertion fence. The database file identity rejects
+continuation against a replaced file. This is an append-stable view, not an
+immutable cross-call database snapshot: edits, deletions, membership changes and
+in-place database restores need a new query. Each individual query and its nested
+attachment/membership reads use one SQLite read transaction.

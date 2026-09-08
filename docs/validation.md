@@ -73,4 +73,65 @@ New-group creation needs its own public-API proof if included in the release. Ex
 
 Record what was run, the authoritative outcome, and any untested boundaries. Source review, available schemas and a successful launch are not substitutes for the behavior being claimed. Do not add production receipt tables or repeated readbacks to compensate for missing tests.
 
-Build and test commands belong here once a real package and test targets exist; there are no placeholder commands to treat as executed.
+Build and synthetic integration commands are below. Live setup remains a separate authorized validation boundary.
+
+## Implementation commands
+
+From the repository root with Swift 6.1 or later:
+
+```sh
+swift build --product messages-mcp
+swift test
+swift build --product MCPTestServer
+uv venv .scratch/protocol-venv
+uv pip install --python .scratch/protocol-venv/bin/python 'mcp==1.26.0'
+.scratch/protocol-venv/bin/python Tests/Protocol/client_test.py
+```
+
+For environments where compiler caches must remain in the checkout:
+
+```sh
+mkdir -p .scratch/tmp .scratch/cache
+TMPDIR="$PWD/.scratch/tmp" CLANG_MODULE_CACHE_PATH="$PWD/.scratch/cache/clang" \
+  swift test --disable-sandbox --cache-path "$PWD/.scratch/cache/swiftpm" -j 2
+```
+
+`--disable-sandbox` disables SwiftPM's build subprocess sandbox, not macOS privacy
+controls. Network access is needed for the pinned public dependencies on a fresh
+checkout. The implementation run used the existing preparatory Python MCP 1.26.0
+virtual environment instead of reinstalling it. The protocol script creates only
+synthetic SQLite and state files under `.scratch/`.
+
+The retained suite exercises real SQLite queries, exact-nanosecond continuation
+through the terminal page, new backdated arrivals, changed filters/query,
+replacement database rejection, half-open dates, unread selection, participant
+handle alternatives and exact membership. Shared-operation tests exercise names
+before limits, duplicate-name candidates, GUID aliases, group-aware 90-day cache
+population, on-use refresh and selected-identity warm reads. Local-state tests
+exercise actual atomic files, FIFO order, restart, write failures and permissions.
+Parser tests include native NSArchiver fixtures, Unicode policy and malformed
+bodies. The independent Python client exercises the actual Swift stdio adapter,
+including typedstream bodies, structured results, alias restart and input errors.
+
+The native Intel implementation and synthetic integration are exercised; they do
+not establish real Messages schema compatibility, private Contacts permission or
+selected-account isolation, Mac synchronization latency, desktop discovery,
+rendering, client approval, or send behavior. The declared macOS 14 deployment
+floor has not been run on macOS 14; Apple Silicon is untested. The frozen 100,000-row
+preparatory benchmark was not changed or rerun as a production performance claim.
+Integrated production latency and live WAL contention remain unmeasured.
+
+The response preserves source row kinds and independent edited/retracted state;
+activity normalization remains an explicit decision in [decisions](decisions.md).
+Sending (direct and existing group, text/files with partial/uncertain outcomes),
+activity buckets/counts and message-bound image access remain first-release work.
+No placeholder operation claims success for those capabilities.
+
+### Recorded implementation result: September 8, 2026
+
+Apple Swift 6.1.2 on x86_64 macOS 26.6.2 built both native executables. The final
+suite passed 34 XCTest cases and 11 Swift Testing tests. The independent Python
+MCP 1.26.0 client passed 12 checks. Deliberately relaxing the arrival fence caused
+three continuation failures; restoring it passed the full suite. The documentation
+graph found no broken local links. These are synthetic implementation results,
+with the live and performance limits above unchanged.

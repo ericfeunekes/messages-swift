@@ -27,9 +27,15 @@ The public read/query and basic scripting paths are the baseline. Advanced injec
 
 - [Apple Contacts](https://developer.apple.com/documentation/contacts/cncontactstore): public authorization and contact-fetch API.
 - Installed macOS Messages scripting dictionary, inspected using `sdef`: text/file sends to a participant or chat, account/participant/chat metadata; no history-message class. Dictionary presence does not establish live send or group-creation success.
-- [MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk): public Swift server/client implementation and stdio transport.
+- [MCP Swift SDK](https://github.com/modelcontextprotocol/swift-sdk): public Swift server/client implementation and stdio transport. The preparatory Intel fixture tested [0.12.1 at this commit](https://github.com/modelcontextprotocol/swift-sdk/tree/a0ae212ebf6eab5f754c3129608bc5557637e605) with an independent Python MCP 1.26.0 client; the production dependency choice remains subject to the application build.
 - [MCP tools specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools): schemas, structured results and image content. Select supported protocol/dependency versions during implementation.
 - [OpenAI local MCP support](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) and [public conformance tests](https://github.com/openai/codex/blob/main/scripts/mcp_conformance/server.py): host integration references, not proof that a custom server is already working.
+
+## Contacts access findings
+
+Apple’s public [container API](https://developer.apple.com/documentation/contacts/cncontainer), [container predicate](https://developer.apple.com/documentation/contacts/cncontact/predicateforcontactsincontainer(withidentifier:)) and [non-unified fetch option](https://developer.apple.com/documentation/contacts/cncontactfetchrequest/unifyresults) support a local scoping candidate. They do not automatically establish the Google login behind a container label. A user-confirmed source selection can resolve that setup question; runtime isolation still needs proof. Local reads reflect macOS synchronization, not a forced remote refresh.
+
+For direct access, Google’s [contact search](https://developers.google.com/people/api/rest/v1/people/searchContacts) is prefix-based and capped at 30 results. [Connections listing](https://developers.google.com/people/api/rest/v1/people.connections/list) provides pagination for complete discovery. [Batch get](https://developers.google.com/people/api/rest/v1/people/getBatchGet) can refresh known contacts, with explicit source and field selection. These API contracts were inspected; native OAuth and directory operations have not been exercised by this project.
 
 ## Source and data boundaries
 

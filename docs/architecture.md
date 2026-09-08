@@ -36,6 +36,8 @@ A small local SQLite store is the proposed persistence mechanism. Its installati
 
 Cache data supports discovery and display. Resolve the current destination and participants before presenting a send preview. A cached label alone is not a write destination.
 
+The smaller local access candidate uses a user-confirmed Google-backed Contacts container with non-unified fetches and device-local contact IDs. The public container API does not prove the Google login behind a display label, so selection is an explicit setup action. Cache refresh then reads the Mac’s synchronized values; it does not force an upstream Google sync. This is acceptable only if the owner accepts ordinary sync freshness. Google server IDs are not necessary for this local cache. A missing container requires reselection rather than silent rebinding. Source-isolation and lookup performance remain untested.
+
 ## Message integration and upstream reuse
 
 Open Apple's Messages database read-only. Resolve contact names from the selected Google Contacts account, either through correctly scoped macOS synchronization or a direct Google adapter; that access choice remains open. Use the public Messages scripting surface for supported sends. Initial OS permission setup is separate from the conversational approval policy in [requirements](requirements.md#reading-drafting-and-sending).

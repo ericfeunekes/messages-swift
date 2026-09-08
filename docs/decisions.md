@@ -17,7 +17,7 @@ This is the register of unresolved requirements and design choices. It separates
 ## Directory and cache
 
 - **Contact authority:** Google Contacts associated with the user’s Gmail account; selected by the owner. The account identifier belongs in private setup, not public documentation.
-- **Contact access:** local macOS Contacts synchronization versus direct Google access is open. Verify selected-account scoping and source identity before choosing. Contact cleanup/migration is a separate task and is not required to be performed by this tool.
+- **Contact access:** source research supports proving a user-selected Google-backed macOS Contacts container first if ordinary Google-to-Mac sync freshness is acceptable. That freshness choice is with the owner. Fetch non-unified records from the selected container; do not infer a Google login from its display label. Direct People API remains the alternative when reads must be independent of Mac sync. Google server-side contact IDs are not required for a disposable single-Mac cache. Actual container isolation and lookup costs still need runtime proof. Contact cleanup/migration remains separate.
 
 - **People cache:** approximately 100 entries with FIFO eviction; selected by the owner. The accepted initial directory baseline uses frequent contacts over 90 days, including group participation. After population, newly used people enter the cache and the earliest-added entry is evicted when full. Working interpretation: refreshing an existing record does not reset its FIFO position.
 - **Freshness:** refresh daily or when a contact is used by an operation such as read or send, whichever is sooner; selected by the owner. Daily scheduling while the server runs and overdue refresh on startup are the proposed execution details; no separate daemon.
@@ -28,7 +28,7 @@ This is the register of unresolved requirements and design choices. It separates
 
 - **Platform floor:** proposed macOS 14+, reflecting the reviewed public Swift core, with Intel as the first tested architecture. Older Intel macOS support and Apple Silicon release coverage are not yet commitments.
 - **Dependency:** public `IMsgCore` dependency versus a narrow maintained source adaptation is unresolved. The choice depends on whether its public API can express the required filters and descending continuation without fetching all history.
-- **MCP integration:** confirm actual schema discovery, image display and the normal client approval path in the intended host. The SDK and source review do not prove this integration.
+- **MCP integration:** a native Intel Swift fixture passed independent protocol tests; see [validation](validation.md#preparatory-evidence-september-8-2026). Actual desktop discovery, image rendering and normal agent/client approval remain open. A separate app-server probe was blocked before initialization; this does not establish a Messages or MCP product failure.
 
 ## Message interpretation
 

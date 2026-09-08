@@ -6,7 +6,15 @@ build_root="$repo_root/.build/release"
 mkdir -p "$repo_root/.scratch"
 staging_root="$(mktemp -d "$repo_root/.scratch/install-menu-app.XXXXXX")"
 app_name="Messages Swift.app"
-signing_identity="${MESSAGES_SWIFT_SIGNING_IDENTITY:--}"
+signing_identity_file="$HOME/Library/Application Support/messages-swift/signing-identity"
+if [[ -n "${MESSAGES_SWIFT_SIGNING_IDENTITY:-}" ]]; then
+  signing_identity="$MESSAGES_SWIFT_SIGNING_IDENTITY"
+elif [[ -f "$signing_identity_file" ]]; then
+  IFS= read -r signing_identity < "$signing_identity_file"
+  [[ -n "$signing_identity" ]] || { print -u2 "Signing identity file is empty."; exit 1; }
+else
+  signing_identity="-"
+fi
 staged_app="$staging_root/$app_name"
 destination_root="$HOME/Applications"
 destination_app="$destination_root/$app_name"

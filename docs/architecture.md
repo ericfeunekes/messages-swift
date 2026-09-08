@@ -83,8 +83,10 @@ open "$HOME/Applications/Messages Swift.app"
 
 The installer builds release binaries and signs the app locally. Set
 `MESSAGES_SWIFT_SIGNING_IDENTITY` to a usable certificate identity to sign updates
-consistently; without it, the installer uses ad-hoc signing whose identity changes
-with the build. Quit the app
+consistently. Otherwise it reads the local certificate choice from
+`~/Library/Application Support/messages-swift/signing-identity`; if neither is
+configured it uses ad-hoc signing whose identity changes with the build. The
+local identity file contains only a certificate identifier, never a password. Quit the app
 before updating. The app has its own Contacts usage declaration and entitlement;
 macOS still requires the user's permission. Signing does not grant access.
 Launch the app normally through Finder or `open`; invoking its nested executable

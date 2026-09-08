@@ -15,9 +15,10 @@ The implementation is native Swift, local, lightweight and fast. It exposes type
 - Match conversations containing all named participants. Exact membership excludes additional participants; it is distinct from filtering individual message senders.
 - Surface ambiguous contacts and conversations as candidate matches with enough context to choose. A ranked first result is not authorization to choose a send destination.
 - Allow a user-assigned name to identify the same thread across sessions. Alias persistence is independent of the contact cache.
-- Cache contact information for approximately 100 frequently contacted people. This accelerates lookup but does not limit which people can be resolved.
+- Cache contact information for approximately 100 people, initially using the frequent-contact directory and then FIFO eviction. Refresh a contact daily or when used by a read/send/other operation, whichever is sooner. This accelerates lookup but does not limit which people can be resolved.
+- Keep thread aliases local to this Mac and durable independently of contact refresh or eviction.
 
-The proposed cache ranking, freshness policy and alias collision rules are recorded in [open decisions](decisions.md#directory-and-cache). They are not silently fixed by this document.
+Accepted cache choices and remaining execution details are recorded in [decisions](decisions.md#directory-and-cache).
 
 ## Reading, drafting and sending
 
@@ -29,7 +30,7 @@ The assistant owns interpreting intent and showing the preview. The client owns 
 
 A send result distinguishes an operation accepted by Messages from confirmed delivery. An uncertain result does not trigger an automatic retry, transport change or duplicate send. Text plus multiple files must not be described as atomic unless the send boundary proves that behavior. If only part succeeds, report that partial outcome.
 
-Initial sending scope is an [open release decision](decisions.md#initial-release-scope). The policy above governs every send that is exposed.
+The first release includes reading and sending. The policy above governs every send that is exposed.
 
 Group sending targets existing conversations in the first release. Creating new groups is outside that release; this does not exclude new individual recipients.
 

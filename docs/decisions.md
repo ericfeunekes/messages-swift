@@ -10,7 +10,7 @@ This is the register of unresolved requirements and design choices. It separates
 
 ## Initial release scope
 
-- **Read and send together, or read-first:** confirmation requested. The intended operation set includes both; this question controls the first release rather than removing the send requirements.
+- **First release:** reading and sending together; selected by the owner.
 - **New groups:** existing groups first; selected by the owner. Creation of new groups is outside the first release. New direct recipients and existing-group sending have distinct paths and must not be classified together.
 - **Files:** text and local attachments are part of the intended send operation. The atomicity and partial-outcome contract for multiple files require an implementation decision and proof.
 
@@ -19,9 +19,9 @@ This is the register of unresolved requirements and design choices. It separates
 - **Contact authority:** Google Contacts associated with the user’s Gmail account; selected by the owner. The account identifier belongs in private setup, not public documentation.
 - **Contact access:** local macOS Contacts synchronization versus direct Google access is open. Verify selected-account scoping and source identity before choosing. Contact cleanup/migration is a separate task and is not required to be performed by this tool.
 
-- **Ranking:** proposed 100 contacts over a 90-day activity window, with recency breaking ties. Count direct messages sent/received plus group messages authored by that person. Do not credit every group member for every outgoing group message. Owner confirmation requested; all-history or recency-based ranking are alternatives.
-- **Freshness:** proposed fixed 24-hour expiry with refresh-on-use and Contacts-change invalidation while running. No background service. Confirm the freshness requirement before implementation.
-- **Aliases:** proposed local-only names that leave Messages' actual thread names unchanged. Normalized alias collisions require explicit replacement or disambiguation. Clarify if aliases must instead sync across devices or rename actual groups; neither is presently required.
+- **People cache:** approximately 100 entries with FIFO eviction; selected by the owner. The accepted initial directory baseline uses frequent contacts over 90 days, including group participation. After population, newly used people enter the cache and the earliest-added entry is evicted when full. Working interpretation: refreshing an existing record does not reset its FIFO position.
+- **Freshness:** refresh daily or when a contact is used by an operation such as read or send, whichever is sooner; selected by the owner. Daily scheduling while the server runs and overdue refresh on startup are the proposed execution details; no separate daemon.
+- **Aliases:** local to this Mac; selected by the owner. They are durable independently of the people cache and do not rename Messages threads. Proposed normalized collisions require explicit replacement or disambiguation.
 - **Storage location:** choose one conventional macOS application-support location outside the checkout, separating durable aliases from replaceable contact cache data. Exact path and permissions are an engineering choice to record before installation.
 
 ## Platform and runtime

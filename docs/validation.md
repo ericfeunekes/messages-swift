@@ -15,7 +15,7 @@ The reviewed imsg tests cover attributed bodies, unread selection, schema variat
 | Swift and dependencies | Build on x86_64; verify selected dependency and deployment-target compatibility |
 | MCP adapter | Real initialize, tool listing and read invocation in the intended client; schema/result handling and image presentation |
 | Conversation directory | Selected Google account scoping, source identity through the chosen adapter, duplicate names, linked contact handles, unnamed and named groups, stable aliases, exact membership and sender-versus-membership distinctions |
-| Cache and aliases | Cold/warm lookup, restart persistence, expiry/invalidation, alias preservation and immediate alias updates, missing contacts and permission changes |
+| Cache and aliases | Cold/warm lookup, restart persistence, FIFO eviction distinct from refresh order, daily/on-use refresh, alias preservation and immediate alias updates, missing contacts and permission changes |
 | Message query | Real SQLite fixtures; filters applied before limits; equal timestamps; arrivals during descending continuation; database replacement |
 | Decoding | Known attributed bodies, Unicode/emoji/multiline text, attachment-only messages, explicit decoding failures and the agreed reaction/edit/preview model |
 | Activity | Consistent counts with history, partial-day bounds, daylight-saving transitions, Monday weeks, empty buckets and stable continuation bounds |

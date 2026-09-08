@@ -42,7 +42,7 @@ Proposed initial targets on the Intel reference machine:
 - one filtered history page: p95 below 500 ms;
 - no-match decoded-body search over a controlled 100,000-message fixture: below 5 seconds.
 
-These targets remain proposed. A controlled 100,000-message release benchmark now measures approximately 12 seconds for rare/no-match decoded-body search, with correct results, so the proposed five-second target is not met. See [validation](validation.md#preparatory-evidence-september-8-2026) for the fixture and measurement limits. The next bounded experiment removes repeated prefix rescans while preserving the workload and search semantics. Only after that measurement should an index or search-scope tradeoff be considered; do not silently narrow search or omit decoded text.
+These targets remain proposed. Removing repeated prefix scans reduced correct rare/no-match decoded-body search from approximately 12 seconds to 5.87–5.90 seconds on the unchanged controlled 100,000-message fixture. The five-second proposal remains unmet. See [validation](validation.md#preparatory-evidence-september-8-2026) for the measurement and correctness limits. The recommendation is to proceed with the simpler no-index approach and measure normal usage before adding a persistent index; owner confirmation is pending. Do not describe this as meeting the five-second proposal or silently narrow search/omit decoded text.
 
 ## Requirements completion
 

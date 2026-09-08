@@ -15,8 +15,12 @@ public enum ApplicationRuntime {
         report: @escaping @Sendable (String) -> Void = { FileHandle.standardError.write(Data($0.utf8)) },
         runner: @escaping @Sendable (MessagesOperations) async throws -> Void = { try await MCPServerRunner.run(operations: $0) }
     ) async throws {
+        let store = MessageStore(path: configuration.databasePath)
+        // Readiness is a real read-only schema/open check on the exact store the
+        // app will retain. Do it before publishing a listener.
+        _ = try store.findChats(.init(limit: 1))
         let operations = MessagesOperations(
-            store: MessageStore(path: configuration.databasePath),
+            store: store,
             directory: directory,
             binding: ContactsContainerBinding(containerID: configuration.containerID),
             state: try LocalState(directory: URL(fileURLWithPath: configuration.stateDirectory))

@@ -26,8 +26,8 @@ install -m 755 "$build_root/messages-mcp" "$staged_app/Contents/MacOS/messages-m
 
 # Sign executable code before the enclosing bundle. This allows the app to request
 # Contacts access under its own identity; it does not alter TCC, Full Disk Access, or quarantine state.
-codesign --force --sign - --options runtime --entitlements "$repo_root/packaging/MessagesSwift.entitlements" "$staged_app/Contents/MacOS/Messages Swift"
 codesign --force --sign - --options runtime "$staged_app/Contents/MacOS/messages-mcp"
+codesign --force --sign - --options runtime --entitlements "$repo_root/packaging/MessagesSwift.entitlements" "$staged_app/Contents/MacOS/Messages Swift"
 codesign --force --sign - --options runtime --entitlements "$repo_root/packaging/MessagesSwift.entitlements" "$staged_app"
 codesign --verify --deep --strict --verbose=2 "$staged_app"
 

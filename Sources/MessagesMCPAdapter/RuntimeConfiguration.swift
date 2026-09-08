@@ -6,6 +6,12 @@ public struct RuntimeConfiguration: Codable, Sendable {
     public let databasePath: String
     public let stateDirectory: String
 
+    public init(containerID: String, databasePath: String, stateDirectory: String) {
+        self.containerID = containerID
+        self.databasePath = databasePath
+        self.stateDirectory = stateDirectory
+    }
+
     public static func load(from path: String) throws -> Self {
         let data = try Data(contentsOf: URL(fileURLWithPath: path))
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -22,6 +28,14 @@ public struct RuntimeConfiguration: Codable, Sendable {
             throw ConfigurationError.invalidConfiguration
         }
         return Self(containerID: containerID, databasePath: databasePath, stateDirectory: stateDirectory)
+    }
+
+    public func save(to path: String) throws {
+        let directory = URL(fileURLWithPath: path).deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let data = try JSONEncoder().encode(self)
+        try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
     }
 }
 

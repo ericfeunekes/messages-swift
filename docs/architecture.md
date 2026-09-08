@@ -2,12 +2,13 @@
 
 ## Shared Swift operations
 
-The primary agent interface is stdio MCP over a native Swift operation layer. The layer owns contact joins, conversation identity, aliases, queries, decoding, state and sending. Transport adapters parse and validate their input, invoke typed operations and present results.
+The primary agent interface is stdio MCP connected to a native menu-bar app over a private local socket. The app owns the shared Swift operation layer. The layer owns contact joins, conversation identity, aliases, queries, decoding, state and sending. Transport adapters parse and validate their input, invoke typed operations and present results.
 
 ```mermaid
 flowchart TD
-    MCP[Stdio MCP adapter] --> Operations[Typed Swift operations]
-    CLI[Optional diagnostic CLI] --> Operations
+    MCP[Stdio MCP bridge] --> Socket[Private local socket]
+    Socket --> App[Menu-bar app: MCP sessions]
+    App --> Operations[Shared typed Swift operations]
     Operations --> Directory[Conversation directory]
     Operations --> History[Message queries and decoding]
     Operations --> Send[Messages send integration]
@@ -20,7 +21,7 @@ flowchart TD
     Send --> Scripting[Messages public scripting surface]
 ```
 
-One local executable can host MCP for the client session. It does not require a system service or a network listener. A CLI, if added, calls the same operations in-process and does not introduce a second cache or query implementation. The core has no MCP, terminal-output or approval-dialog dependency.
+The menu-bar app owns Contacts permission, selected-container settings, one operation actor, one Messages database connection and one state writer. Each agent connection has a separate MCP session using the same operations. The stdio bridge relays protocol bytes over a user-private Unix socket; it does not execute operations or retry requests. No TCP listener or separate system service is required. The core has no menu, terminal-output or approval-dialog dependency.
 
 Use the official Swift MCP SDK for the adapter after verifying compatible pinned versions. Tool descriptions and schemas should be compact and explicit. Deferred tool discovery is client-dependent and is a validation question, not a reason to assume every schema is always in context.
 
@@ -64,41 +65,58 @@ Verify the normal host flow with an inert operation before enabling real sends. 
 
 The tested search direction is one streaming scan, shared searchable-text resolution before full record construction, and native Foundation matching under an explicit whole-Character policy. Profiling identified case-insensitive matching as the dominant remaining cost; attributed-body parsing was a small fraction. The preferred policy prototype completes the controlled 100,000-message workload in about 1.1 seconds without a persistent body index. It corrects a reproduced false match in the old path and is not certified bug-for-bug equivalent. The [matching-policy decision](decisions.md#search-matching-policy) remains explicit; [validation](validation.md#search-profiling-and-matching-policy-experiment) records tests, timings and limits. Production code still needs the shared message model, source integration and live verification.
 
-The people cache uses FIFO eviction and refreshes records daily or on use, whichever is sooner. Refresh and eviction order are separate: an existing record's refresh does not move it to the back of the queue under the accepted interpretation. Keep user aliases immediately consistent and independent of cache refresh/eviction. A process may retain hot lookups while connected to MCP, but persistence must also work across process restarts. Daily refresh while active and overdue refresh at startup avoid requiring a separate daemon.
+The people cache uses FIFO eviction and refreshes records daily or on use, whichever is sooner. Refresh and eviction order are separate: an existing record's refresh does not move it to the back of the queue under the accepted interpretation. Keep user aliases immediately consistent and independent of cache refresh/eviction. A process may retain hot lookups while connected to MCP, but persistence must also work across process restarts. The menu-bar app owns daily refresh while active and overdue refresh at startup.
 
 ## Runtime setup
 
-The package has a shared `MessagesCore` library, a thin `MessagesMCPAdapter`, and
-one `messages-mcp` executable. It links the system SQLite library and the pinned
-official Swift MCP SDK 0.12.1. `MCPTestServer` is a separate synthetic test target;
-production has no fixture flag, send stub or private helper.
+The package contains the shared `MessagesCore` library, `MessagesMCPAdapter`,
+a native `Messages Swift` menu-bar app and the `messages-mcp` stdio bridge.
+The app uses the system SQLite and Contacts libraries and pinned Swift MCP SDK
+0.12.1. Synthetic test executables remain separate from production.
 
-Create a private JSON configuration outside the repository:
-
-```json
-{
-  "containerID": "USER-CONFIRMED-DEVICE-LOCAL-CONTAINER-ID"
-}
-```
-
-The selected container must already be synchronized with the intended Google
-account and explicitly confirmed by the user. A container display name does not
-prove account ownership. This executable checks existing Contacts authorization;
-it does not request it or change account, sync or security settings. Authorizing
-the final executable/host and obtaining the selected container ID are live setup
-steps still requiring validation. Do not put actual IDs in public configuration.
-
-Optional absolute `databasePath` and `stateDirectory` values override
-`~/Library/Messages/chat.db` and `~/Library/Application Support/messages-swift`.
-Unknown keys and relative paths are rejected. Run:
+Install locally from the checkout:
 
 ```sh
-.build/debug/messages-mcp --config /absolute/path/to/private-config.json
+./scripts/install-menu-app.sh
+open "$HOME/Applications/Messages Swift.app"
 ```
 
-Stdout carries MCP only. Startup errors and background-refresh failures use
-sanitized stderr messages. The MCP [operation schemas](schemas.md) own the wire
-contract. Reads never open the Messages database for writing.
+The installer builds release binaries and signs the app locally. Quit the app
+before updating. The app has its own Contacts usage declaration and entitlement;
+macOS still requires the user's permission. Signing does not grant access.
+Launch the app normally through Finder or `open`; invoking its nested executable
+from Codex does not establish an independent permission identity on the tested Mac.
+
+Use the Messages menu to request Contacts access, open Settings, select the
+already-synchronized account, and save. Selection is explicit: a container display
+name does not establish Google account ownership. A saved source change takes
+effect after quitting and reopening the app. Grant the app Full Disk Access in
+System Settings if macOS denies access to Messages. No account, synchronization,
+privacy database or client signature is changed by the installer.
+
+Settings saves private configuration at
+`~/Library/Application Support/messages-swift/config.json`. The required
+`containerID` is device-local. Optional absolute `databasePath` and
+`stateDirectory` override `~/Library/Messages/chat.db` and
+`~/Library/Application Support/messages-swift`. Unknown keys and relative paths
+are rejected. Real container IDs belong only in private setup.
+
+The app publishes `~/.messages-swift/runtime/mcp.sock` for local clients. The
+private runtime directory is 0700 and socket 0600. Both ends validate the peer's
+user identity. Each connection carries the existing newline-delimited MCP
+protocol with an independent session; all sessions use one shared operation actor.
+The bridge reports an unavailable app rather than starting another state owner or
+replaying a request. Stdout contains MCP only; stderr messages exclude private data.
+
+Register the installed bridge through the client's supported MCP configuration.
+For Codex:
+
+```sh
+codex mcp add messages-swift -- "$HOME/Applications/Messages Swift.app/Contents/MacOS/messages-mcp"
+```
+
+A new client session is required to verify discovery. Registration alone does not
+prove a live read. No send, count or image placeholder is exposed.
 
 `contacts.json` is version 1 with `containerID`, `isSeeded` and FIFO `entries`;
 each entry carries `person` (source identity, display name, handles), `admittedAt`
@@ -106,8 +124,7 @@ and `refreshedAt`. `aliases.json` is version 1 with a `chat.guid`-to-name map.
 Internal dates use Foundation's Codable reference-date seconds. Cache replacement
 or source reselection does not replace the alias file. Unsupported versions and
 malformed state fail rather than being silently reset. New state directories use
-0700 and state files 0600. Use one active server per state directory; concurrent
-process writers are not supported by this slice.
+0700 and state files 0600. The app is the sole state writer; independent MCP sessions share it. Do not run a separate operation process against the same state directory.
 
 First population ranks the selected source's people over the preceding 90 days.
 A one-member conversation credits its counterpart for sent and received source
@@ -139,11 +156,9 @@ snapshot; linked/removed IDs and native matching require the live proof gate.
 On startup and once per minute while active, the server checks for contacts from
 an earlier local calendar day and refreshes them. Every use refreshes the selected
 contact's synchronized values even within the same day. Failed refreshes do not
-mark records fresh. The process owns this schedule; there is no daemon.
+mark records fresh. The menu-bar app owns this schedule for all connected clients.
 
-`ApplicationRuntime` is the production composition used by `main`: it constructs
-the real SQLite store and local state, refreshes on startup, and owns cancellation
-of the periodic refresh task when MCP exits. Tests supply a clock, selected-source
+`ApplicationRuntime` is the production composition used by the menu-bar app: it opens the read-only SQLite store, constructs local state, refreshes on startup, and owns periodic refresh for the app lifetime. Tests supply a clock, selected-source
 adapter and runner at this same dependency boundary; production has no test flags.
 
 A MessageStore owns one lazy, persistent read-only SQLite connection and serializes
@@ -151,7 +166,6 @@ its per-call read transactions. Cursors carry that connection's instance identit
 exact source nanoseconds, message and chat row coordinates, immutable filters and
 an arrival fence. There is no stat-before-open identity claim and no reopen by
 pathname. SQLite's HAS_MOVED result is checked before/after each read; errors fail
-closed. Normal WAL access keeps the original SQLite pathname. A new store/server
-rejects old cursors, even if pointed at the same file; GUID aliases remain durable.
+closed. Normal WAL access keeps the original SQLite pathname. An app restart creates a new store and rejects old cursors, even if pointed at the same file; reconnecting an MCP client to the same running app preserves the store identity. GUID aliases remain durable.
 This is append-stable continuation, not a historical snapshot through edits,
 deletions or membership changes.

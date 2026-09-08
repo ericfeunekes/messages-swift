@@ -4,6 +4,10 @@ import MessagesCore
 
 public enum MCPServerRunner {
     public static func run(operations: MessagesOperations) async throws {
+        try await run(operations: operations, transport: StdioTransport())
+    }
+
+    public static func run(operations: MessagesOperations, transport: any Transport) async throws {
         let server = Server(name: "messages-swift", version: "0.1.0", instructions: "Read and search local Messages with selected Contacts names. Ambiguous contacts require a choice. This slice exposes local aliases but no send, count or image operation. Decoding diagnostics mean search coverage is incomplete. Never interpret a cached label as a send destination.", capabilities: .init(tools: .init()))
         let tools = ToolSchemas.tools
         await server.withMethodHandler(ListTools.self) { _ in .init(tools: tools) }
@@ -56,8 +60,15 @@ public enum MCPServerRunner {
                 return try encode(DomainFailure(error: .init(code: domainCode(error), chatIDs: conflicts)), isError: true)
             }
         }
-        try await server.start(transport: StdioTransport())
-        await server.waitUntilCompleted()
+        do {
+            try await server.start(transport: transport)
+            await server.waitUntilCompleted()
+        } catch {
+            await transport.disconnect()
+            throw error
+        }
+        await server.stop()
+        await transport.disconnect()
     }
 
     private static func encode<T: Encodable>(_ object: T, isError: Bool = false) throws -> CallTool.Result {

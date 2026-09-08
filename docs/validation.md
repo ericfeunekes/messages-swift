@@ -164,3 +164,44 @@ under ignored revision evidence directories; earlier mutable logs are not relabe
 as current-commit approvals. Full source/test changes are frozen before each final
 run and review. The live setup, multi-process and remaining release limits above
 continue to apply.
+
+## Menu-bar app and local bridge
+
+The menu-bar app owns the native permission and shared state lifetime. Synthetic
+socket tests exercise actual MCP initialization from two clients, shared aliases,
+independent request IDs, fragmented/oversized input, backpressure, half-close,
+shutdown, private path checks, stale endpoints and rejected duplicate ownership.
+Completed sessions release during the listener lifetime. Cancellation of a partial
+response closes that connection so a later frame cannot append to unfinished JSON.
+
+The integrated run passed 51 XCTest and 29 Swift Testing tests. An independent
+Python MCP 1.26.0 client passed the existing 15 protocol checks. Four additional
+bridge subprocess checks cover a 1 MiB request/2 MiB response with partial writes,
+app EOF while stdin remains open, closed-peer writes without SIGPIPE termination,
+and rejection of regular-file and real-socket symlink endpoints. Run them with:
+
+```sh
+swift build --product MCPBridgeTestClient
+.scratch/protocol-venv/bin/python Tests/Protocol/bridge_test.py
+```
+
+The bridge test also accepts `MESSAGES_BRIDGE_TEST_BINARY` for isolated mutation
+runs. This is test-runner configuration, not a production fixture mode. Removing
+the relay's socket-EOF exit caused a bounded timeout. Relaxing the inbound frame
+limit failed its oversized-frame test. Disabling completed-session reaping failed
+100 weak-reference release assertions. Restored production source passed.
+
+A read-only native core smoke test on one recent real conversation read two pages
+of ten rows, found no overlapping message identities, reported no first-page
+decoding failures and found a sampled decoded-text query. Aggregate elapsed time
+was 0.284 seconds; no message content or identifiers were logged. This is a narrow
+core observation, not a production latency benchmark or Contacts/MCP proof.
+
+A separately launched, locally signed AppKit setup probe received user-granted
+Contacts access and listed container metadata through the public API. Direct
+Codex-child requests were denied because macOS attributed them to Codex's identity.
+The successful probe establishes the app-owned consent direction. The installed
+production app has a different identity and requires its own live Contacts and
+Messages access checks, selected-container confirmation and client discovery.
+Permission persistence across ad-hoc signed updates remains untested. Sending,
+counts and image access remain outside this foundation installation.

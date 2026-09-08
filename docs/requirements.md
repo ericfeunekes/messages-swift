@@ -72,6 +72,6 @@ Image access resolves an attachment belonging to a message result. It is not an 
 - No decompilation, disassembly, proprietary binary redistribution, private-framework injection or macOS security-setting changes.
 - No requirement to edit or unsend messages, emit typing indicators/read receipts, create polls, manage accounts or provide a remote messaging bot.
 - Contact reconciliation, deduplication, migration and edits to the authoritative contact directory are separate work. This project consumes the resulting directory and does not merge or move contacts.
-- No separate daemon, cloud service, embedded language model or general plugin framework without an accepted use case.
+- A native menu-bar app owns OS permission setup, selected Contacts source, connection status and the shared operation/cache lifetime. Multiple agent connections use that one owner. No separate background service, cloud service, embedded language model or general plugin framework is required.
 
 Acceptance evidence belongs in [validation](validation.md); this document defines intended behavior, not a claim that it is already implemented.

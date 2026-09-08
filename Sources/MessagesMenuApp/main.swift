@@ -204,7 +204,12 @@ private actor RuntimeStatusSignal {
     private func refreshSetupState() {
         guard CNContactStore.authorizationStatus(for: .contacts) == .authorized else { status = .contactsRequired; refreshMenu(); return }
         refreshSources()
-        guard (try? RuntimeConfiguration.load(from: configurationPath)) != nil else { status = .sourceRequired; refreshMenu(); return }
+        guard let configuration = try? RuntimeConfiguration.load(from: configurationPath),
+              sources.contains(where: { $0.identifier == configuration.containerID }) else {
+            status = .sourceRequired
+            refreshMenu()
+            return
+        }
         startRuntimeIfConfigured()
         refreshMenu()
     }
@@ -256,7 +261,7 @@ private actor RuntimeStatusSignal {
                 try await ApplicationRuntime.run(configuration: configuration, directory: MacContactsDirectory(), runner: { operations in
                     try socket.start(operations: operations)
                     await signal.report(.ready)
-                    await socket.waitUntilStopped()
+                    try await socket.waitUntilStopped()
                 })
             } catch is CancellationError {
                 return

@@ -2,7 +2,7 @@
 
 Native Swift access to Apple Messages for agents, with readable conversation names, contact resolution and saved thread aliases.
 
-The primary interface is a local stdio MCP server over shared Swift operations. A diagnostic CLI can use those same operations when needed. Intel macOS is the initial validation target.
+A native menu-bar app owns permissions and shared Swift operations; agents connect through a local stdio MCP bridge. A diagnostic CLI can use those same operations when needed. Intel macOS is the initial validation target.
 
 The first implementation slice provides conversation finding, reading, decoded-body search and durable local aliases. Sending, activity counts and image access remain required for the first release and are not registered as placeholder tools.
 
@@ -37,8 +37,8 @@ swift build --product messages-mcp
 swift test
 ```
 
-Run `.build/debug/messages-mcp --config /absolute/path/to/private-config.json`.
-The [runtime setup](docs/architecture.md#runtime-setup) describes the private configuration and permission boundaries. [Validation](docs/validation.md#implementation-commands) includes the synthetic MCP test commands. Native Intel is the tested architecture; the declared macOS 14 floor and Apple Silicon remain untested.
+Install with `./scripts/install-menu-app.sh`, then open `~/Applications/Messages Swift.app`.
+The [runtime setup](docs/architecture.md#runtime-setup) covers permissions, contact-source selection and client registration. [Validation](docs/validation.md#implementation-commands) includes the synthetic MCP test commands. Native Intel is the tested architecture; the declared macOS 14 floor and Apple Silicon remain untested.
 
 ## Privacy and licensing
 

@@ -104,12 +104,19 @@ public struct SetChatAliasResult: Codable, Sendable, Equatable {
     public init(chatID: String, alias: String?) { self.chatID = chatID; self.alias = alias }
 }
 
+public enum ContactMatch: String, Codable, Sendable { case exact, approximate }
+
 public struct ContactCandidate: Codable, Sendable, Equatable {
     public let identity: ContactIdentity
     public let displayName: String
     public let handles: [String]
 
-    public init(person: ContactPerson) {
+    public let requestedHandle: String?
+    public let match: ContactMatch?
+
+    public init(person: ContactPerson, requestedHandle: String? = nil, match: ContactMatch? = nil) {
+        self.requestedHandle = requestedHandle
+        self.match = match
         identity = person.identity
         displayName = person.displayName
         handles = person.handles

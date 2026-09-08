@@ -65,11 +65,13 @@ coverage when `decodingFailureCount` is positive. Attachments carry metadata and
 not file contents. Message and event collections together form the page; consumers
 must not treat either array's length as activity counts.
 
-For warm phone lookups, native matching is best effort. `unresolvedContactHandles`
-identifies handles whose ownership/completeness is unproven. Their participants
-and senders remain handle-only, while `contactCandidates` preserves selected-source
-possibilities, including approximate matches. These candidates are not resolved
-identities and must not be silently selected. Full selected-container discovery
+For warm phone lookups, native matching is best effort. A single exact normalized
+selected-source owner retains its joined name and identity. `unresolvedContactHandles`
+identifies approximate-only, unmatched or ambiguous handles; their participants
+and senders remain handle-only. `contactCandidates` preserves selected-source
+possibilities with `requestedHandle` and `match` (`exact` or `approximate`), so
+approximate candidates are not silently selected or detached from their query.
+Native candidate completeness and country normalization remain live proof limits. Full selected-container discovery
 is separate from this candidate lookup.
 
 MCP returns structured JSON plus equivalent text. Invalid invocations use JSON-RPC

@@ -17,7 +17,7 @@ private final class OperationDirectory: ContactsDirectorySource, @unchecked Send
     func contacts(in binding: ContactsContainerBinding, identities: Set<ContactIdentity>, matchingHandles: Set<String>) throws -> ContactLookup {
         guard binding.containerID == "fixture" else { throw ContactsDirectoryError.selectedContainerMissing(binding.containerID) }
         subsetCalls.append(identities)
-        return ContactLookup(people: people.filter { identities.contains($0.identity) || $0.handles.contains { matchingHandles.contains(normalizedContactHandle($0)) } }, unresolvedHandles: unresolvedHandles)
+        return ContactLookup(people: people.filter { identities.contains($0.identity) || $0.handles.contains { matchingHandles.contains(normalizedContactHandle($0)) } }, unresolvedHandles: unresolvedHandles, candidatesByHandle: Dictionary(uniqueKeysWithValues: matchingHandles.map { ($0, people) }))
     }
 }
 

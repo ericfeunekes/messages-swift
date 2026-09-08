@@ -52,7 +52,7 @@ public final class MacContactsDirectory: ContactsDirectorySource {
         try validate(binding)
         let wanted = Set(matchingHandles.map(normalizedContactHandle))
         var candidates = Set(identities.filter { $0.containerID == binding.containerID }.map(\.id))
-        var unresolved: Set<String> = []
+        var candidateIDsByHandle: [String: Set<String>] = [:]
         // Public Contacts predicates cannot be compounded with container scope.
         // Read only candidate IDs until their source container has been checked.
         for handle in wanted.sorted() {
@@ -61,23 +61,29 @@ public final class MacContactsDirectory: ContactsDirectorySource {
                 predicate = CNContact.predicateForContacts(matchingEmailAddress: handle)
             } else {
                 predicate = CNContact.predicateForContacts(matching: CNPhoneNumber(stringValue: handle))
-                // Native phone matching is best effort, not complete proof of
-                // this project's normalized-handle equivalence or uniqueness.
-                unresolved.insert(handle)
             }
-            candidates.formUnion(try fetch(predicate, full: false).map(\.identifier))
+            let ids = Set(try fetch(predicate, full: false).map(\.identifier))
+            candidateIDsByHandle[handle] = ids
+            candidates.formUnion(ids)
         }
         var selected: [String] = []
         for id in candidates.sorted() {
             let containers = try source.containerIDs(for: .owningContact(id))
             if containers.contains(binding.containerID) { selected.append(id) }
         }
-        guard !selected.isEmpty else { return ContactLookup(people: [], unresolvedHandles: unresolved) }
+        guard !selected.isEmpty else { return ContactLookup(people: [], unresolvedHandles: wanted, candidatesByHandle: Dictionary(uniqueKeysWithValues: wanted.map { ($0, []) })) }
         let selectedIDs = Set(selected)
         let people = try fetch(CNContact.predicateForContacts(withIdentifiers: selected), full: true)
             .filter { selectedIDs.contains($0.identifier) }
             .map { person($0, in: binding) }
-        return ContactLookup(people: people, unresolvedHandles: unresolved)
+        var unresolved: Set<String> = []
+        var matches: [String: [ContactPerson]] = [:]
+        for handle in wanted {
+            let exact = people.filter { $0.handles.contains { normalizedContactHandle($0) == handle } }
+            if exact.count != 1 { unresolved.insert(handle) }
+            matches[handle] = people.filter { candidateIDsByHandle[handle, default: []].contains($0.identity.id) || exact.contains($0) }
+        }
+        return ContactLookup(people: people, unresolvedHandles: unresolved, candidatesByHandle: matches)
     }
 
     private func validate(_ binding: ContactsContainerBinding) throws {

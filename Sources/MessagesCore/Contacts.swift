@@ -27,14 +27,16 @@ public struct ContactPerson: Codable, Sendable, Hashable {
 }
 
 /// Results from a source lookup. Unresolved handles must not be treated as
-/// uniquely resolved: the source cannot guarantee complete candidate coverage.
+/// uniquely resolved: no single exact owner was established from the returned selected-source records.
 public struct ContactLookup: Sendable {
     public let people: [ContactPerson]
     public let unresolvedHandles: Set<String>
+    public let candidatesByHandle: [String: [ContactPerson]]
 
-    public init(people: [ContactPerson], unresolvedHandles: Set<String> = []) {
+    public init(people: [ContactPerson], unresolvedHandles: Set<String> = [], candidatesByHandle: [String: [ContactPerson]] = [:]) {
         self.people = people
         self.unresolvedHandles = unresolvedHandles
+        self.candidatesByHandle = candidatesByHandle
     }
 }
 
@@ -62,9 +64,13 @@ public protocol ContactsDirectorySource {
 
 public extension ContactsDirectorySource {
     func contacts(in binding: ContactsContainerBinding, identities: Set<ContactIdentity>, matchingHandles: Set<String> = []) throws -> ContactLookup {
-        ContactLookup(people: try allContacts(in: binding).filter { person in
+        let people = try allContacts(in: binding).filter { person in
             identities.contains(person.identity) || person.handles.contains { matchingHandles.contains(normalizedContactHandle($0)) }
+        }
+        let candidates = Dictionary(uniqueKeysWithValues: matchingHandles.map { handle in
+            (handle, people.filter { $0.handles.contains { normalizedContactHandle($0) == handle } })
         })
+        return ContactLookup(people: people, unresolvedHandles: Set(candidates.filter { $0.value.count != 1 }.keys), candidatesByHandle: candidates)
     }
 }
 

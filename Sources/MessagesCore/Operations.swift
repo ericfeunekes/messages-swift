@@ -75,7 +75,7 @@ public actor MessagesOperations {
         try cacheUsed(people, handles: chat.participants + page.messages.compactMap(\.sender), identities: lookup.people.map(\.identity), now: now)
         return MessagePageResult(chat: enrich(chat, people: people, unresolvedHandles: lookup.unresolvedHandles), messages: page.messages.compactMap { message($0, people: people, unresolvedHandles: lookup.unresolvedHandles) },
                                  events: page.messages.compactMap { event($0, people: people, unresolvedHandles: lookup.unresolvedHandles) },
-                                 decodingDiagnostics: diagnostics(page), decodingFailureCount: page.decodingFailureCount, scannedAssociationCount: page.scannedAssociationCount, unresolvedContactHandles: lookup.unresolvedHandles.sorted(), contactCandidates: lookup.unresolvedHandles.isEmpty ? [] : lookup.people.map(ContactCandidate.init), nextCursor: try encodeCursor(page.nextCursor))
+                                 decodingDiagnostics: diagnostics(page), decodingFailureCount: page.decodingFailureCount, scannedAssociationCount: page.scannedAssociationCount, unresolvedContactHandles: lookup.unresolvedHandles.sorted(), contactCandidates: contactCandidates(lookup), nextCursor: try encodeCursor(page.nextCursor))
     }
 
     public func searchMessages(_ input: SearchMessagesInput, now: Date = Date()) throws -> SearchMessagesResult {
@@ -167,7 +167,7 @@ public actor MessagesOperations {
                 }
             }
             guard !found.isEmpty else { throw OperationError.contactNotFound }
-            if found.count > 1 { result.candidates += found.map(ContactCandidate.init); continue }
+            if found.count > 1 { result.candidates += found.map { ContactCandidate(person: $0) }; continue }
             let person = found[0]
             guard !person.handles.isEmpty else { throw OperationError.contactNotFound }
             result.groups.append(Array(Set(person.handles.map(normalize))).sorted())
@@ -226,6 +226,17 @@ public actor MessagesOperations {
                                   attachments: attachments(record), isEdited: record.isEdited, isRetracted: record.isRetracted,
                                   diagnostic: record.kind == .unknown ? "Source row classification is unavailable or unrecognized" : nil)
     }
+    private func contactCandidates(_ lookup: ContactLookup) -> [ContactCandidate] {
+        var result: [ContactCandidate] = []
+        for handle in lookup.candidatesByHandle.keys.sorted() {
+            for person in lookup.candidatesByHandle[handle, default: []] {
+                let exact = person.handles.contains { normalize($0) == handle }
+                result.append(ContactCandidate(person: person, requestedHandle: handle, match: exact ? .exact : .approximate))
+            }
+        }
+        return result
+    }
+
     private func diagnostics(_ page: MessagePage) -> [DecodingDiagnostic] {
         page.decodingFailures.map { DecodingDiagnostic(messageID: $0.messageID.rawValue, chatID: $0.chatID.rawValue, reason: "body decoding failed") }
     }

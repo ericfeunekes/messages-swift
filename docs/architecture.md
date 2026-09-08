@@ -113,7 +113,7 @@ First population ranks the selected source's people over the preceding 90 days.
 A one-member conversation credits its counterpart for sent and received source
 rows. A multi-member conversation credits only the actual incoming author;
 outgoing group rows give no passive member credit. Repeated associations to the
-same person credit a source row once. This cache-baseline rule does not settle the
+same handle credit a source row once; a person's score sums its handle scores. This cache-baseline rule does not settle the
 later logical activity-count normalizer. Current membership cardinality is used;
 no display-name/routing-string guess distinguishes a residual one-member group.
 Later admission evicts the earliest entry at 100 people; refresh preserves order.
@@ -128,8 +128,9 @@ minimal candidate IDs from the local Contacts index. Each candidate's container
 is checked against the explicit binding before fetching names/handles. Foreign
 records are neither materialized, cached nor returned. All selected candidates
 are retained, including uncached shared-handle owners. Phone matching is documented
-best effort; the response exposes unresolved handles and candidate people rather
-than asserting unique ownership from approximate hits. This avoids application
+best effort. One exact normalized selected-source owner retains its joined name
+and identity on warm reads. Approximate-only or multiple exact owners remain
+unresolved; candidate entries include their requested handle and match type. This avoids application
 full-container enumeration in the warm candidate path, but does not prove native
 index performance or complete phone-normalization equivalence. Full name discovery
 still enumerates the selected container. The API sequence is not an atomic Contacts

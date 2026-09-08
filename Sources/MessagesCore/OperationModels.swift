@@ -249,13 +249,21 @@ public struct MessagePageResult: Codable, Sendable, Equatable {
     public let messages: [MessageResult]
     public let events: [MessageEventResult]
     public let decodingDiagnostics: [DecodingDiagnostic]
+    public let decodingFailureCount: Int
+    public let scannedAssociationCount: Int
+    public let contactCandidates: [ContactCandidate]
+    public let unresolvedContactHandles: [String]
     public let nextCursor: String?
 
-    public init(chat: ChatResult, messages: [MessageResult], events: [MessageEventResult], decodingDiagnostics: [DecodingDiagnostic], nextCursor: String?) {
+    public init(chat: ChatResult, messages: [MessageResult], events: [MessageEventResult], decodingDiagnostics: [DecodingDiagnostic], decodingFailureCount: Int = 0, scannedAssociationCount: Int = 0, unresolvedContactHandles: [String] = [], contactCandidates: [ContactCandidate] = [], nextCursor: String?) {
         self.chat = chat
         self.messages = messages
         self.events = events
         self.decodingDiagnostics = decodingDiagnostics
+        self.decodingFailureCount = decodingFailureCount
+        self.scannedAssociationCount = scannedAssociationCount
+        self.contactCandidates = contactCandidates
+        self.unresolvedContactHandles = unresolvedContactHandles
         self.nextCursor = nextCursor
     }
 }
@@ -277,14 +285,18 @@ public struct SearchMessagesResult: Codable, Sendable, Equatable {
     public let messages: [MessageResult]
     public let events: [MessageEventResult]
     public let decodingDiagnostics: [DecodingDiagnostic]
+    public let decodingFailureCount: Int
+    public let scannedAssociationCount: Int
     public let contactCandidates: [ContactCandidate]
     public let nextCursor: String?
 
-    public init(chats: [ChatResult], messages: [MessageResult], events: [MessageEventResult], decodingDiagnostics: [DecodingDiagnostic], contactCandidates: [ContactCandidate], nextCursor: String?) {
+    public init(chats: [ChatResult], messages: [MessageResult], events: [MessageEventResult], decodingDiagnostics: [DecodingDiagnostic], contactCandidates: [ContactCandidate], decodingFailureCount: Int = 0, scannedAssociationCount: Int = 0, nextCursor: String?) {
         self.chats = chats
         self.messages = messages
         self.events = events
         self.decodingDiagnostics = decodingDiagnostics
+        self.decodingFailureCount = decodingFailureCount
+        self.scannedAssociationCount = scannedAssociationCount
         self.contactCandidates = contactCandidates
         self.nextCursor = nextCursor
     }

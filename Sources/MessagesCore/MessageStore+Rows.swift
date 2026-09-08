@@ -11,7 +11,7 @@ extension MessageStore {
     ].enumerated().map { index, expression in "\(expression) AS c\(index)" }.joined(separator: ", ")
   }
 
-  func message(from statement: SQLiteStatement, database: OpaquePointer, schema: MessageSchema, generation: Int64, resolvedBody: DecodedBody? = nil) throws -> MessageRecord {
+  func message(from statement: SQLiteStatement, database: OpaquePointer, schema: MessageSchema, generation: String, resolvedBody: DecodedBody? = nil) throws -> MessageRecord {
     let rowID = statement.integer(at: 0)
     let body = resolvedBody ?? BodyDecoder.decode(plainText: statement.text(at: 5), attributedBody: statement.data(at: 6))
     let attachments = try attachments(messageRowID: rowID, database: database, schema: schema, generation: generation)
@@ -27,6 +27,7 @@ extension MessageStore {
     return MessageRecord(
       id: MessageID(rawValue: guid?.isEmpty == false ? guid! : "\(generation):\(rowID)"),
       sourceRowID: rowID,
+      sourceChatRowID: statement.integer(at: 1),
       sourceDateNanos: statement.integer(at: 4),
       chatID: ChatID(rawValue: statement.text(at: 2) ?? ""),
       guid: guid,
@@ -62,7 +63,7 @@ extension MessageStore {
     return .ordinary
   }
 
-  private func attachments(messageRowID: Int64, database: OpaquePointer, schema: MessageSchema, generation: Int64) throws -> [AttachmentMetadata] {
+  private func attachments(messageRowID: Int64, database: OpaquePointer, schema: MessageSchema, generation: String) throws -> [AttachmentMetadata] {
     guard schema.hasAttachmentTables else { return [] }
     func column(_ name: String) -> String { schema.attachmentHas(name) ? "a.\(name)" : "NULL" }
     let statement = try SQLiteStatement(database, """

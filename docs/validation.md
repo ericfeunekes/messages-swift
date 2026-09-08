@@ -127,7 +127,7 @@ Sending (direct and existing group, text/files with partial/uncertain outcomes),
 activity buckets/counts and message-bound image access remain first-release work.
 No placeholder operation claims success for those capabilities.
 
-### Recorded implementation result: September 8, 2026
+### Initial implementation result: September 8, 2026, commit 582be93
 
 Apple Swift 6.1.2 on x86_64 macOS 26.6.2 built both native executables. The final
 suite passed 34 XCTest cases and 11 Swift Testing tests. The independent Python
@@ -135,3 +135,32 @@ MCP 1.26.0 client passed 12 checks. Deliberately relaxing the arrival fence caus
 three continuation failures; restoring it passed the full suite. The documentation
 graph found no broken local links. These are synthetic implementation results,
 with the live and performance limits above unchanged.
+
+## Integration-review corrections
+
+The correction suite adds composite message/chat association pagination through
+terminal pages, exact error assertions, 10,000 failed-body diagnostics with bounded
+examples, sparse mixed histories, persistent-connection replacement during a read,
+concurrent pathname exchange and normal WAL append visibility. A 10,000-unrelated-chat
+fixture measures SQLite instruction work for exact retrieval; it makes no latency
+claim. Busy-group fixtures distinguish actual authors from passive members.
+
+Controlled Contacts adapter tests inspect identifier-only requests, non-unified
+fetches, candidate-container checks before materialization, foreign/missing IDs,
+selected duplicate owners and approximate phone candidates. Actual indexed native
+Contacts behavior remains a live permission/isolation/completeness gate. Production
+runtime tests exercise the same composition as main with real SQLite/state and an
+injected source/clock/runner; they cover configuration, cold/overdue startup,
+scheduling, failure, cancellation and actual executable error sanitization.
+
+On the tested Mac, replacement during an open read produced SQLite's extended
+IOERR_VNODE (6922) from HAS_MOVED instead of a successful moved flag. This is a
+failed opened-file check, not evidence that the pathname is unchanged. Apple
+describes vnode errors after direct invalidating database-file operations in its
+[Core Data session](https://devstreaming-cdn.apple.com/videos/wwdc/2016/242vdhuk4hmwrxnb465/242/242_whats_new_in_core_data.pdf?dl=1).
+
+Final run logs and independent review returns are retained separately by commit
+under ignored revision evidence directories; earlier mutable logs are not relabeled
+as current-commit approvals. Full source/test changes are frozen before each final
+run and review. The live setup, multi-process and remaining release limits above
+continue to apply.

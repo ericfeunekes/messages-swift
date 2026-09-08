@@ -73,7 +73,7 @@ public struct ChatRecord: Codable, Sendable {
 
 public struct ChatSnapshot: Codable, Sendable {
   public let chats: [ChatRecord]
-  public let databaseGeneration: Int64
+  public let databaseGeneration: String
   public let arrivalFenceRowID: Int64
 }
 
@@ -82,6 +82,7 @@ public struct MessageRecord: Codable, Sendable {
   /// Raw SQLite coordinate used for pagination and diagnostics. It is not a
   /// durable cross-database identity; use `id`/`guid` for that purpose.
   public let sourceRowID: Int64
+  public let sourceChatRowID: Int64
   /// Exact raw Apple-epoch nanoseconds from `message.date`.
   public let sourceDateNanos: Int64
   public let chatID: ChatID
@@ -183,10 +184,11 @@ public struct MessagePageCursor: Codable, Sendable, Equatable {
   public let beforeDateNanos: Int64
   /// Private SQLite coordinate used only as the deterministic tie-breaker.
   public let beforeRowID: Int64
+  public let beforeChatRowID: Int64
   public let arrivalFenceRowID: Int64
-  /// File-system identity binds a cursor to a database instance while allowing
-  /// ordinary appended rows in that same database.
-  public let databaseGeneration: Int64
+  /// Opaque identity of the owning MessageStore connection. A new store/process
+  /// requires a fresh query; a cursor never binds to a reopened pathname.
+  public let databaseGeneration: String
 }
 
 public struct ReadMessagesRequest: Codable, Sendable {
@@ -227,6 +229,8 @@ public struct MessagePage: Codable, Sendable {
   public let messages: [MessageRecord]
   public let nextCursor: MessagePageCursor?
   public let decodingFailures: [BodyDecodingFailure]
+  public let decodingFailureCount: Int
+  public let scannedAssociationCount: Int
 }
 
 public struct BodyDecodingFailure: Codable, Sendable {

@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SERVER = Path(os.environ.get("MESSAGES_MCP_TEST_SERVER", ROOT / ".build/debug/MCPTestServer"))
 STATE_DIRECTORY = ROOT / ".scratch/protocol-test-state"
 DATABASE = ROOT / ".scratch/protocol-fixture.sqlite"
+PRIOR_CURSOR = None
 
 
 def record(name):
@@ -48,7 +49,7 @@ def build_database():
                 associated_message_type INTEGER, item_type INTEGER,
                 balloon_bundle_id TEXT, date_edited INTEGER, date_retracted INTEGER
             );
-            CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER);
+            CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER, PRIMARY KEY(chat_id, message_id));
             CREATE TABLE attachment (filename TEXT, transfer_name TEXT, uti TEXT, mime_type TEXT, total_bytes INTEGER, is_sticker INTEGER);
             CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
         """)
@@ -80,7 +81,7 @@ def build_database():
         database.execute("INSERT INTO attachment (filename, transfer_name, uti, mime_type, total_bytes, is_sticker) VALUES (?, ?, ?, ?, ?, ?)", ("/synthetic/missing.jpg", "missing.jpg", "public.jpeg", "image/jpeg", 10, 0))
         database.execute("INSERT INTO message_attachment_join (message_id, attachment_id) VALUES (?, ?)", (5, 1))
         database.executemany("INSERT INTO chat_message_join (chat_id, message_id) VALUES (?, ?)", [
-            (1, 1), (1, 2), (1, 3), (2, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9),
+            (1, 1), (2, 1), (1, 2), (1, 3), (2, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9),
         ])
 
 
@@ -108,6 +109,7 @@ async def assert_invalid_params(client, tool, arguments):
 
 
 async def first_process(client, initialization):
+    global PRIOR_CURSOR
     assert initialization.serverInfo.name == "messages-swift"
     record("initialize")
 
@@ -153,6 +155,34 @@ async def first_process(client, initialization):
     assert len(second_records) == 1
     assert second_records[0]["id"] != first_records[0]["id"]
     record("backward cursor wiring")
+    PRIOR_CURSOR = page_one["nextCursor"]
+    for bad_cursor in ["not-base64", "e30="]:
+        invalid = await client.call_tool("read_messages", {"chatID": "chat-direct", "cursor": bad_cursor})
+        assert invalid.isError and content(invalid)["error"]["code"] == "invalid_cursor"
+    mismatch = await client.call_tool("read_messages", {"chatID": "chat-direct", "unreadOnly": True, "cursor": PRIOR_CURSOR})
+    assert mismatch.isError and content(mismatch)["error"]["code"] == "cursor_mismatch"
+    record("exact invalid_cursor and cursor_mismatch errors")
+
+    full = content(await client.call_tool("search_messages", {"query": "ordinary message", "limit": 100}))
+    expected = [(row["id"], row["chatID"]) for row in full["messages"]]
+    pairs = []
+    arguments = {"query": "ordinary message", "limit": 1}
+    failures = scanned = 0
+    for _ in range(20):
+        page = content(await client.call_tool("search_messages", arguments))
+        pairs.extend((row["id"], row["chatID"]) for row in page["messages"])
+        failures += page["decodingFailureCount"]
+        scanned += page["scannedAssociationCount"]
+        assert len(page["decodingDiagnostics"]) <= 10
+        if not page.get("nextCursor"):
+            break
+        arguments["cursor"] = page["nextCursor"]
+    else:
+        raise AssertionError("global association continuation did not terminate")
+    assert pairs == expected and len(pairs) == 3
+    assert failures == full["decodingFailureCount"] == 1
+    assert scanned == full["scannedAssociationCount"] == 10
+    record("global association pagination and nonduplicated diagnostic totals")
 
     classified = content(await client.call_tool("read_messages", {"chatID": "chat-direct", "limit": 20}))
     messages = {message["id"]: message for message in classified["messages"]}
@@ -215,6 +245,9 @@ async def second_process(client, _initialization):
     assert [chat["chatID"] for chat in result["chats"]] == ["chat-direct"]
     assert result["chats"][0]["alias"] == "Family"
     record("alias survives process restart")
+    stale = await client.call_tool("read_messages", {"chatID": "chat-direct", "cursor": PRIOR_CURSOR})
+    assert stale.isError and content(stale)["error"]["code"] == "cursor_mismatch"
+    record("new process rejects prior connection cursor")
 
 
 async def main():

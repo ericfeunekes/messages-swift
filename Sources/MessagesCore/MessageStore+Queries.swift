@@ -1,93 +1,6 @@
 import Foundation
 
 extension MessageStore {
-  /// Returns all structurally filtered chats. Adapters must apply aliases/name
-  /// resolution before their own pagination rather than truncating here.
-  public func allChats(_ filter: ChatFilter = ChatFilter()) throws -> [ChatRecord] {
-    try validate(filter: filter, limit: 1)
-    return try findChatsInternal(filter: filter, limit: nil)
-  }
-
-  public func chatSnapshot(
-    filter: ChatFilter = ChatFilter(), arrivalFenceRowID: Int64? = nil, databaseGeneration: Int64? = nil
-  ) throws -> ChatSnapshot {
-    try withSnapshot { database, schema, generation in
-      if let databaseGeneration, databaseGeneration != generation { throw MessageStoreError.cursorFilterMismatch }
-      let fence: Int64
-      if let arrivalFenceRowID { fence = arrivalFenceRowID }
-      else { fence = try latestMessageID(database: database) }
-      return ChatSnapshot(chats: try chats(filter: filter, limit: nil, database: database, schema: schema, fence: fence), databaseGeneration: generation, arrivalFenceRowID: fence)
-    }
-  }
-
-  public func findChats(_ request: FindChatsRequest) throws -> [ChatRecord] {
-    try validate(filter: request.filter, limit: request.limit)
-    return try findChatsInternal(filter: request.filter, limit: request.limit)
-  }
-
-  public func chat(id: ChatID) throws -> ChatRecord? {
-    try allChats().first { $0.id == id }
-  }
-
-  /// Counts interaction rows for each handle in conversations active since the
-  /// supplied date; group conversations contribute to each member's baseline.
-  public func frequentContactHandles(since: Date) throws -> [String: Int] {
-    try withSnapshot { database, _, _ in
-      let statement = try SQLiteStatement(database, """
-        SELECT h.id, COUNT(*) FROM message m
-        JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
-        JOIN chat_handle_join chj ON chj.chat_id = cmj.chat_id
-        JOIN handle h ON h.ROWID = chj.handle_id
-        WHERE m.date >= ? GROUP BY h.id
-        """)
-      defer { statement.finalize() }
-      try statement.bind([.integer(try appleEpoch(since))])
-      var result: [String: Int] = [:]
-      while try statement.step() { if let handle = statement.text(at: 0) { result[handle] = Int(statement.integer(at: 1)) } }
-      return result
-    }
-  }
-
-  private func findChatsInternal(filter: ChatFilter, limit: Int?) throws -> [ChatRecord] {
-    try withSnapshot { database, schema, _ in
-      try chats(filter: filter, limit: limit, database: database, schema: schema, fence: try latestMessageID(database: database))
-    }
-  }
-
-  private func chats(filter: ChatFilter, limit: Int?, database: OpaquePointer, schema: MessageSchema, fence: Int64) throws -> [ChatRecord] {
-      let clause = try chatClause(filter: filter, schema: schema, chatAlias: "c", fence: fence)
-      let sql = """
-        SELECT c.ROWID, c.guid, IFNULL(c.chat_identifier, ''), NULLIF(c.display_name, ''), NULLIF(c.service_name, ''), MAX(m.date)
-        FROM chat c
-        JOIN chat_message_join cmj ON cmj.chat_id = c.ROWID
-        JOIN message m ON m.ROWID = cmj.message_id
-        WHERE \(clause.sql)
-        GROUP BY c.ROWID
-        ORDER BY MAX(m.date) DESC, c.ROWID DESC
-        \(limit == nil ? "" : "LIMIT ?")
-        """
-      let statement = try SQLiteStatement(database, sql)
-      defer { statement.finalize() }
-      try statement.bind(clause.values + (limit.map { [.integer(Int64($0))] } ?? []))
-      var result: [ChatRecord] = []
-      while try statement.step() {
-        let rowID = statement.integer(at: 0)
-        let id = ChatID(rawValue: statement.text(at: 1) ?? "")
-        result.append(ChatRecord(
-          id: id,
-          sourceRowID: rowID,
-          identifier: statement.text(at: 2) ?? "",
-          nativeName: statement.text(at: 3),
-          service: statement.text(at: 4),
-          participants: try participants(chatRowID: rowID, database: database),
-          lastActivityAt: appleDate(statement.integer(at: 5)),
-          lastActivityNanos: statement.isNull(at: 5) ? nil : statement.integer(at: 5),
-          unreadCount: schema.has("is_read") ? try unreadCount(chatRowID: rowID, database: database) : nil
-        ))
-      }
-      return result
-  }
-
   public func readMessages(_ request: ReadMessagesRequest) throws -> MessagePage {
     try validate(filter: request.filter, limit: request.limit, cursor: request.cursor)
     if let cursor = request.cursor, cursor.searchQuery != nil || cursor.searchMode != nil {
@@ -99,7 +12,7 @@ extension MessageStore {
   public func searchMessages(_ request: SearchMessagesRequest) throws -> MessagePage {
     try validate(filter: request.filter, limit: request.limit, cursor: request.cursor)
     let trimmed = request.query.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return MessagePage(messages: [], nextCursor: nil, decodingFailures: []) }
+    guard !trimmed.isEmpty else { return MessagePage(messages: [], nextCursor: nil, decodingFailures: [], decodingFailureCount: 0, scannedAssociationCount: 0) }
     if let cursor = request.cursor, cursor.searchQuery != request.query || cursor.searchMode != request.mode {
       throw MessageStoreError.cursorFilterMismatch
     }
@@ -127,37 +40,48 @@ extension MessageStore {
         JOIN chat c ON c.ROWID = cmj.chat_id
         LEFT JOIN handle h ON h.ROWID = m.handle_id
         WHERE \(clause.sql)
-        ORDER BY m.date DESC, m.ROWID DESC
+        ORDER BY m.date DESC, m.ROWID DESC, cmj.chat_id DESC
         \(limitClause)
         """
       let statement = try SQLiteStatement(database, sql)
       defer { statement.finalize() }
       try statement.bind(clause.values + (search == nil ? [.integer(Int64(limit + 1))] : []))
       var records: [MessageRecord] = []
-      var decodingFailures: [BodyDecodingFailure] = []
+      var examples: [BodyDecodingFailure] = []
+      var failureCount = 0
+      var scannedCount = 0
+      var nextCursor: MessagePageCursor?
       while try statement.step() {
         let rowID = statement.integer(at: 0)
         let messageID = MessageID(rawValue: statement.text(at: 3).flatMap { $0.isEmpty ? nil : $0 } ?? "\(generation):\(rowID)")
         let chatID = ChatID(rawValue: statement.text(at: 2) ?? "")
         let body = BodyDecoder.decode(plainText: statement.text(at: 5), attributedBody: statement.data(at: 6))
-        if body.status == .failed { decodingFailures.append(BodyDecodingFailure(messageID: messageID, chatID: chatID)) }
-        if let search, !NativeMatcher.matches(body.text ?? "", query: search.0, mode: search.1) {
-          continue
+        scannedCount += 1
+        if body.status == .failed {
+          failureCount += 1
+          if examples.count < 10 { examples.append(BodyDecodingFailure(messageID: messageID, chatID: chatID)) }
         }
-        records.append(try message(from: statement, database: database, schema: schema, generation: generation, resolvedBody: body))
-        if records.count > limit { break }
+        if let search, !NativeMatcher.matches(body.text ?? "", query: search.0, mode: search.1) { continue }
+        let record = try message(from: statement, database: database, schema: schema, generation: generation, resolvedBody: body)
+        records.append(record)
+        if records.count == limit {
+          // Look only for existence. This association is not consumed, decoded
+          // or diagnosed until the next page starts after the last returned key.
+          if try statement.step() {
+            nextCursor = MessagePageCursor(filter: filter, searchQuery: search?.0, searchMode: search?.1,
+              beforeDateNanos: record.sourceDateNanos, beforeRowID: record.sourceRowID,
+              beforeChatRowID: record.sourceChatRowID, arrivalFenceRowID: fence, databaseGeneration: generation)
+          }
+          break
+        }
       }
-      return makePage(records, filter: filter, search: search, fence: fence, generation: generation, limit: limit, decodingFailures: decodingFailures)
+      return MessagePage(messages: records, nextCursor: nextCursor, decodingFailures: examples,
+                         decodingFailureCount: failureCount, scannedAssociationCount: scannedCount)
     }
   }
 }
 
-private extension MessageStore {
-  func validate(filter: ChatFilter, limit: Int) throws {
-    guard (1...500).contains(limit) else { throw MessageStoreError.invalidLimit(limit) }
-    if let start = filter.startDate, let end = filter.endDate, start >= end { throw MessageStoreError.invalidDateRange }
-  }
-
+extension MessageStore {
   func validate(filter: MessageFilter, limit: Int, cursor: MessagePageCursor?) throws {
     guard (1...500).contains(limit) else { throw MessageStoreError.invalidLimit(limit) }
     if let start = filter.startDate, let end = filter.endDate, start >= end { throw MessageStoreError.invalidDateRange }
@@ -171,43 +95,12 @@ private extension MessageStore {
     return statement.integer(at: 0)
   }
 
-  func participants(chatRowID: Int64, database: OpaquePointer) throws -> [String] {
-    let statement = try SQLiteStatement(database, """
-      SELECT h.id FROM chat_handle_join chj JOIN handle h ON h.ROWID = chj.handle_id
-      WHERE chj.chat_id = ? ORDER BY h.id COLLATE NOCASE ASC
-      """)
-    defer { statement.finalize() }
-    try statement.bind([.integer(chatRowID)])
-    var result: [String] = []
-    while try statement.step() { if let handle = statement.text(at: 0) { result.append(handle) } }
-    return result
-  }
 
-  func unreadCount(chatRowID: Int64, database: OpaquePointer) throws -> Int {
-    let statement = try SQLiteStatement(database, """
-      SELECT COUNT(*) FROM chat_message_join cmj JOIN message m ON m.ROWID = cmj.message_id
-      WHERE cmj.chat_id = ? AND m.is_from_me = 0 AND m.is_read = 0
-      """)
-    defer { statement.finalize() }
-    try statement.bind([.integer(chatRowID)])
-    _ = try statement.step()
-    return Int(statement.integer(at: 0))
-  }
-
-  func makePage(_ messages: [MessageRecord], filter: MessageFilter, search: (String, MessageSearchMode)?, fence: Int64, generation: Int64, limit: Int, decodingFailures: [BodyDecodingFailure]) -> MessagePage {
-    guard messages.count > limit else { return MessagePage(messages: messages, nextCursor: nil, decodingFailures: decodingFailures) }
-    let returned = Array(messages.prefix(limit))
-    let last = returned[returned.count - 1]
-    return MessagePage(messages: returned, nextCursor: MessagePageCursor(
-      filter: filter, searchQuery: search?.0, searchMode: search?.1,
-      beforeDateNanos: last.sourceDateNanos, beforeRowID: last.sourceRowID,
-      arrivalFenceRowID: fence, databaseGeneration: generation), decodingFailures: decodingFailures)
-  }
 }
 
-private struct SQLClause { let sql: String; let values: [SQLiteValue] }
+struct SQLClause { let sql: String; let values: [SQLiteValue] }
 
-private extension MessageStore {
+extension MessageStore {
   func normalizedHandles(_ input: [String]) -> [String] {
     Array(Set(input.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }.filter { !$0.isEmpty })).sorted()
   }
@@ -237,8 +130,8 @@ private extension MessageStore {
       conditions.append("m.is_from_me = 0 AND m.is_read = 0")
     }
     if let cursor {
-      conditions.append("(m.date < ? OR (m.date = ? AND m.ROWID < ?))")
-      values += [.integer(cursor.beforeDateNanos), .integer(cursor.beforeDateNanos), .integer(cursor.beforeRowID)]
+      conditions.append("(m.date < ? OR (m.date = ? AND (m.ROWID < ? OR (m.ROWID = ? AND cmj.chat_id < ?))))")
+      values += [.integer(cursor.beforeDateNanos), .integer(cursor.beforeDateNanos), .integer(cursor.beforeRowID), .integer(cursor.beforeRowID), .integer(cursor.beforeChatRowID)]
     }
     return SQLClause(sql: conditions.joined(separator: " AND "), values: values)
   }

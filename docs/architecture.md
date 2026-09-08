@@ -109,24 +109,48 @@ malformed state fail rather than being silently reset. New state directories use
 0700 and state files 0600. Use one active server per state directory; concurrent
 process writers are not supported by this slice.
 
-First population ranks the selected source's people by interactions in their
-conversations over the preceding 90 days, including group participants. Later
-admission evicts the earliest entry at 100 people. Refresh does not move existing
-entries. Operations batch used-contact writes. Warm history reads use cached
-handle-to-source identities to request current selected contacts; missing or
-changed handles trigger full selected-source discovery. Find and search use
-complete transient discovery so cache capacity cannot exclude people. The native
-adapter keeps container scoping and non-unified enumeration for selective reads,
-materializing requested identities and all matching-handle owners so an uncached duplicate cannot appear uniquely resolved. Identity-only daily refresh can stop once its requested records are found. This is not a forced Google sync.
+First population ranks the selected source's people over the preceding 90 days.
+A one-member conversation credits its counterpart for sent and received source
+rows. A multi-member conversation credits only the actual incoming author;
+outgoing group rows give no passive member credit. Repeated associations to the
+same person credit a source row once. This cache-baseline rule does not settle the
+later logical activity-count normalizer. Current membership cardinality is used;
+no display-name/routing-string guess distinguishes a residual one-member group.
+Later admission evicts the earliest entry at 100 people; refresh preserves order.
+
+Operations batch used-contact writes. Exact reads and alias lookup query an exact
+chat GUID; search enriches only returned/diagnostic-example chat GUIDs. Name
+discovery may inspect all candidates. Participant and unread joins are batched
+rather than fetched once per unrelated chat.
+
+Warm contact reads use non-unified identifier/email/phone predicates to obtain
+minimal candidate IDs from the local Contacts index. Each candidate's container
+is checked against the explicit binding before fetching names/handles. Foreign
+records are neither materialized, cached nor returned. All selected candidates
+are retained, including uncached shared-handle owners. Phone matching is documented
+best effort; the response exposes unresolved handles and candidate people rather
+than asserting unique ownership from approximate hits. This avoids application
+full-container enumeration in the warm candidate path, but does not prove native
+index performance or complete phone-normalization equivalence. Full name discovery
+still enumerates the selected container. The API sequence is not an atomic Contacts
+snapshot; linked/removed IDs and native matching require the live proof gate.
 
 On startup and once per minute while active, the server checks for contacts from
 an earlier local calendar day and refreshes them. Every use refreshes the selected
 contact's synchronized values even within the same day. Failed refreshes do not
 mark records fresh. The process owns this schedule; there is no daemon.
 
-Message cursors retain exact source nanoseconds, descending row coordinates,
-filters, search query and an insertion fence. The database file identity rejects
-continuation against a replaced file. This is an append-stable view, not an
-immutable cross-call database snapshot: edits, deletions, membership changes and
-in-place database restores need a new query. Each individual query and its nested
-attachment/membership reads use one SQLite read transaction.
+`ApplicationRuntime` is the production composition used by `main`: it constructs
+the real SQLite store and local state, refreshes on startup, and owns cancellation
+of the periodic refresh task when MCP exits. Tests supply a clock, selected-source
+adapter and runner at this same dependency boundary; production has no test flags.
+
+A MessageStore owns one lazy, persistent read-only SQLite connection and serializes
+its per-call read transactions. Cursors carry that connection's instance identity,
+exact source nanoseconds, message and chat row coordinates, immutable filters and
+an arrival fence. There is no stat-before-open identity claim and no reopen by
+pathname. SQLite's HAS_MOVED result is checked before/after each read; errors fail
+closed. Normal WAL access keeps the original SQLite pathname. A new store/server
+rejects old cursors, even if pointed at the same file; GUID aliases remain durable.
+This is append-stable continuation, not a historical snapshot through edits,
+deletions or membership changes.

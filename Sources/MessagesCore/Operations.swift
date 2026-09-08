@@ -20,7 +20,7 @@ public actor MessagesOperations {
         let due = state.entriesDueForRefresh(now: now)
         guard !due.isEmpty else { return }
         let identities = Set(due.map { $0.person.identity })
-        let people = try directory.contacts(in: binding, identities: identities, matchingHandles: [])
+        let people = try directory.contacts(in: binding, identities: identities, matchingHandles: []).people
         try validateDirectory(people)
         let found = Set(people.map(\.identity))
         for identity in identities.subtracting(found) { try state.removeCachedContact(identity) }
@@ -70,11 +70,12 @@ public actor MessagesOperations {
         guard let chat = try store.chat(id: ChatID(rawValue: input.chatID)) else { throw OperationError.unknownChat(input.chatID) }
         let filter = MessageFilter(chatID: chat.id, startDate: input.dateRange.start, endDate: input.dateRange.end, unreadOnly: input.unreadOnly)
         let page = try store.readMessages(ReadMessagesRequest(filter: filter, limit: input.limit, cursor: try decodeCursor(input.cursor)))
-        let people = try peopleForRead(handles: chat.participants + page.messages.compactMap(\.sender), now: now)
-        try cacheUsed(people, handles: chat.participants + page.messages.compactMap(\.sender), now: now)
-        return MessagePageResult(chat: enrich(chat, people: people), messages: page.messages.compactMap { message($0, people: people) },
-                                 events: page.messages.compactMap { event($0, people: people) },
-                                 decodingDiagnostics: diagnostics(page), nextCursor: try encodeCursor(page.nextCursor))
+        let lookup = try peopleForRead(handles: chat.participants + page.messages.compactMap(\.sender), now: now)
+        let people = lookup.people
+        try cacheUsed(people, handles: chat.participants + page.messages.compactMap(\.sender), identities: lookup.people.map(\.identity), now: now)
+        return MessagePageResult(chat: enrich(chat, people: people, unresolvedHandles: lookup.unresolvedHandles), messages: page.messages.compactMap { message($0, people: people, unresolvedHandles: lookup.unresolvedHandles) },
+                                 events: page.messages.compactMap { event($0, people: people, unresolvedHandles: lookup.unresolvedHandles) },
+                                 decodingDiagnostics: diagnostics(page), decodingFailureCount: page.decodingFailureCount, scannedAssociationCount: page.scannedAssociationCount, unresolvedContactHandles: lookup.unresolvedHandles.sorted(), contactCandidates: lookup.unresolvedHandles.isEmpty ? [] : lookup.people.map(ContactCandidate.init), nextCursor: try encodeCursor(page.nextCursor))
     }
 
     public func searchMessages(_ input: SearchMessagesInput, now: Date = Date()) throws -> SearchMessagesResult {
@@ -91,11 +92,11 @@ public actor MessagesOperations {
                                    endDate: input.dateRange.end, unreadOnly: input.unreadOnly)
         let page = try store.searchMessages(SearchMessagesRequest(filter: filter, query: input.query, limit: input.limit, cursor: try decodeCursor(input.cursor)))
         let ids = Set(page.messages.map(\.chatID) + page.decodingFailures.map(\.chatID))
-        let chats = try store.allChats().filter { ids.contains($0.id) }
+        let chats = try store.chats(ids: ids)
         try cacheUsed(people, handles: chats.flatMap(\.participants) + page.messages.compactMap(\.sender), identities: resolution.identities, now: now)
         return SearchMessagesResult(chats: chats.map { enrich($0, people: people) }, messages: page.messages.compactMap { message($0, people: people) },
                                     events: page.messages.compactMap { event($0, people: people) }, decodingDiagnostics: diagnostics(page),
-                                    contactCandidates: [], nextCursor: try encodeCursor(page.nextCursor))
+                                    contactCandidates: [], decodingFailureCount: page.decodingFailureCount, scannedAssociationCount: page.scannedAssociationCount, nextCursor: try encodeCursor(page.nextCursor))
     }
 
     private func preparedPeople(now: Date) throws -> [ContactPerson] {
@@ -128,18 +129,18 @@ public actor MessagesOperations {
         return people
     }
 
-    private func peopleForRead(handles: [String], now: Date) throws -> [ContactPerson] {
+    private func peopleForRead(handles: [String], now: Date) throws -> ContactLookup {
         guard state.isSeeded, !state.cacheEntries.contains(where: { $0.person.identity.containerID != binding.containerID }) else {
-            return try preparedPeople(now: now)
+            return ContactLookup(people: try preparedPeople(now: now))
         }
         let wanted = Set(handles.map(normalize))
         let cached = state.cacheEntries.map(\.person).filter { person in person.handles.contains { wanted.contains(normalize($0)) } }
         let known = Set(cached.flatMap(\.handles).map(normalize))
-        guard wanted.isSubset(of: known) else { return try preparedPeople(now: now) }
+        guard wanted.isSubset(of: known) else { return ContactLookup(people: try preparedPeople(now: now)) }
         let fresh = try directory.contacts(in: binding, identities: Set(cached.map(\.identity)), matchingHandles: wanted)
-        try validateDirectory(fresh)
-        let freshHandles = Set(fresh.flatMap(\.handles).map(normalize))
-        guard wanted.isSubset(of: freshHandles) else { return try preparedPeople(now: now) }
+        try validateDirectory(fresh.people)
+        let freshHandles = Set(fresh.people.flatMap(\.handles).map(normalize))
+        guard wanted.subtracting(fresh.unresolvedHandles).isSubset(of: freshHandles) else { return ContactLookup(people: try preparedPeople(now: now)) }
         return fresh
     }
 
@@ -194,14 +195,15 @@ public actor MessagesOperations {
         let handles = Set(chat.participants.map(normalize))
         return people.contains { personMatches($0, query: query) && $0.handles.contains { handles.contains(normalize($0)) } }
     }
-    private func participant(_ handle: String?, people: [ContactPerson]) -> Participant? {
+    private func participant(_ handle: String?, people: [ContactPerson], unresolvedHandles: Set<String> = []) -> Participant? {
         guard let handle else { return nil }
+        if unresolvedHandles.contains(normalize(handle)) { return Participant(handle: handle) }
         let found = people.filter { $0.handles.contains { normalize($0) == normalize(handle) } }
         guard found.count == 1 else { return Participant(handle: handle) }
         return Participant(handle: handle, displayName: found[0].displayName, sourceIdentity: found[0].identity)
     }
-    private func enrich(_ chat: ChatRecord, people: [ContactPerson]) -> ChatResult {
-        let participants = chat.participants.compactMap { participant($0, people: people) }
+    private func enrich(_ chat: ChatRecord, people: [ContactPerson], unresolvedHandles: Set<String> = []) -> ChatResult {
+        let participants = chat.participants.compactMap { participant($0, people: people, unresolvedHandles: unresolvedHandles) }
         let alias = state.alias(for: chat.id.rawValue)
         let label = alias ?? chat.nativeName ?? participants.map { $0.displayName ?? $0.handle }.joined(separator: ", ")
         return ChatResult(chatID: chat.id.rawValue, label: label.isEmpty ? chat.identifier : label, nativeName: chat.nativeName, alias: alias,
@@ -210,16 +212,16 @@ public actor MessagesOperations {
     private func attachments(_ record: MessageRecord) -> [AttachmentResult] {
         record.attachments.map { AttachmentResult(id: $0.id, filename: $0.transferName ?? $0.filename.map { URL(fileURLWithPath: $0).lastPathComponent }, mimeType: $0.mimeType, availability: $0.availability) }
     }
-    private func message(_ record: MessageRecord, people: [ContactPerson]) -> MessageResult? {
+    private func message(_ record: MessageRecord, people: [ContactPerson], unresolvedHandles: Set<String> = []) -> MessageResult? {
         guard record.kind == .ordinary || record.kind == .attachmentOnly else { return nil }
-        return MessageResult(id: record.id.rawValue, chatID: record.chatID.rawValue, date: record.date, sender: participant(record.sender, people: people),
+        return MessageResult(id: record.id.rawValue, chatID: record.chatID.rawValue, date: record.date, sender: participant(record.sender, people: people, unresolvedHandles: unresolvedHandles),
                              isFromMe: record.isFromMe, text: record.body.text, attachments: attachments(record), kind: record.kind == .ordinary ? .ordinary : .attachment,
                              decodingStatus: record.body.status, isEdited: record.isEdited, isRetracted: record.isRetracted)
     }
-    private func event(_ record: MessageRecord, people: [ContactPerson]) -> MessageEventResult? {
+    private func event(_ record: MessageRecord, people: [ContactPerson], unresolvedHandles: Set<String> = []) -> MessageEventResult? {
         guard record.kind != .ordinary && record.kind != .attachmentOnly else { return nil }
         return MessageEventResult(id: record.id.rawValue, chatID: record.chatID.rawValue, date: record.date, kind: record.kind.rawValue, text: record.body.text,
-                                  sender: participant(record.sender, people: people), associatedMessageID: record.associatedMessageGUID,
+                                  sender: participant(record.sender, people: people, unresolvedHandles: unresolvedHandles), associatedMessageID: record.associatedMessageGUID,
                                   associatedMessageType: record.associatedMessageType, decodingStatus: record.body.status,
                                   attachments: attachments(record), isEdited: record.isEdited, isRetracted: record.isRetracted,
                                   diagnostic: record.kind == .unknown ? "Source row classification is unavailable or unrecognized" : nil)
@@ -239,7 +241,7 @@ public actor MessagesOperations {
     }
     private struct FindCursor: Codable {
         let input: FindChatsInput
-        let generation: Int64
+        let generation: String
         let fence: Int64
         let beforeDate: Int64
         let beforeRow: Int64

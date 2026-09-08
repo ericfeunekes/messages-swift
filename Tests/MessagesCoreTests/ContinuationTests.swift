@@ -84,12 +84,12 @@ final class ContinuationTests: XCTestCase, @unchecked Sendable {
         let ops = try operations()
         let first = try await ops.searchMessages(SearchMessagesInput(query: "needle", limit: 1))
         let cursor = try XCTUnwrap(first.nextCursor)
-        do { _ = try await ops.searchMessages(SearchMessagesInput(query: "other", limit: 1, cursor: cursor)); XCTFail("Changed query accepted") } catch { }
-        do { _ = try await ops.searchMessages(SearchMessagesInput(query: "needle", unreadOnly: true, limit: 1, cursor: cursor)); XCTFail("Changed unread filter accepted") } catch { }
-        do { _ = try await ops.searchMessages(SearchMessagesInput(query: "needle", chatID: "chat", limit: 1, cursor: cursor)); XCTFail("Changed conversation scope accepted") } catch { }
+        do { _ = try await ops.searchMessages(SearchMessagesInput(query: "other", limit: 1, cursor: cursor)); XCTFail("Changed query accepted") } catch MessageStoreError.cursorFilterMismatch { } catch { XCTFail("Unexpected error: \(error)") }
+        do { _ = try await ops.searchMessages(SearchMessagesInput(query: "needle", unreadOnly: true, limit: 1, cursor: cursor)); XCTFail("Changed unread filter accepted") } catch MessageStoreError.cursorFilterMismatch { } catch { XCTFail("Unexpected error: \(error)") }
+        do { _ = try await ops.searchMessages(SearchMessagesInput(query: "needle", chatID: "chat", limit: 1, cursor: cursor)); XCTFail("Changed conversation scope accepted") } catch MessageStoreError.cursorFilterMismatch { } catch { XCTFail("Unexpected error: \(error)") }
         let read = try await ops.readMessages(ReadMessagesInput(chatID: "chat", limit: 1))
         let readCursor = try XCTUnwrap(read.nextCursor)
-        do { _ = try await ops.readMessages(ReadMessagesInput(chatID: "chat", unreadOnly: true, limit: 1, cursor: readCursor)); XCTFail("Changed read filter accepted") } catch { }
+        do { _ = try await ops.readMessages(ReadMessagesInput(chatID: "chat", unreadOnly: true, limit: 1, cursor: readCursor)); XCTFail("Changed read filter accepted") } catch MessageStoreError.cursorFilterMismatch { } catch { XCTFail("Unexpected error: \(error)") }
     }
     func testReplacementDatabaseRejectsOldCursorEvenWithSameRowsAndChatGUID() async throws {
         try schema(); try add(1, date: 1); try add(2, date: 2)
@@ -101,8 +101,8 @@ final class ContinuationTests: XCTestCase, @unchecked Sendable {
         try FileManager.default.moveItem(atPath: path, toPath: root.appendingPathComponent("original.db").path)
         try schema(); try add(1, date: 1); try add(2, date: 2)
         try sql("UPDATE message SET guid='replacement-' || guid")
-        do { _ = try await ops.searchMessages(SearchMessagesInput(query: "needle", limit: 1, cursor: searchCursor)); XCTFail("Replaced database accepted search cursor") } catch { }
-        do { _ = try await ops.readMessages(ReadMessagesInput(chatID: "chat", limit: 1, cursor: readCursor)); XCTFail("Replaced database accepted read cursor") } catch { }
+        do { _ = try await ops.searchMessages(SearchMessagesInput(query: "needle", limit: 1, cursor: searchCursor)); XCTFail("Replaced database accepted search cursor") } catch MessageStoreError.databaseReplaced { } catch MessageStoreError.databaseIdentityUnavailable(let code) { XCTAssertEqual(code, SQLITE_IOERR | (27 << 8)) } catch { XCTFail("Unexpected error: \(error)") }
+        do { _ = try await ops.readMessages(ReadMessagesInput(chatID: "chat", limit: 1, cursor: readCursor)); XCTFail("Replaced database accepted read cursor") } catch MessageStoreError.databaseReplaced { } catch MessageStoreError.databaseIdentityUnavailable(let code) { XCTAssertEqual(code, SQLITE_IOERR | (27 << 8)) } catch { XCTFail("Unexpected error: \(error)") }
     }
     func testHalfOpenDatesAndUnreadApplyBeforeLimit() async throws {
         try schema()
@@ -148,8 +148,8 @@ final class ContinuationTests: XCTestCase, @unchecked Sendable {
         try schema(); try add(1, date: 1)
         let ops = try operations()
         let dates = DateRange(start: Date(timeIntervalSince1970: 1e15))
-        do { _ = try await ops.readMessages(ReadMessagesInput(chatID: "chat", dateRange: dates)); XCTFail("Unrepresentable date accepted") } catch { }
-        do { _ = try await ops.searchMessages(SearchMessagesInput(query: "needle", dateRange: dates)); XCTFail("Unrepresentable date accepted") } catch { }
-        do { _ = try await ops.findChats(FindChatsInput(dateRange: dates)); XCTFail("Unrepresentable date accepted") } catch { }
+        do { _ = try await ops.readMessages(ReadMessagesInput(chatID: "chat", dateRange: dates)); XCTFail("Unrepresentable date accepted") } catch MessageStoreError.invalidDateRange { } catch { XCTFail("Unexpected error: \(error)") }
+        do { _ = try await ops.searchMessages(SearchMessagesInput(query: "needle", dateRange: dates)); XCTFail("Unrepresentable date accepted") } catch MessageStoreError.invalidDateRange { } catch { XCTFail("Unexpected error: \(error)") }
+        do { _ = try await ops.findChats(FindChatsInput(dateRange: dates)); XCTFail("Unrepresentable date accepted") } catch MessageStoreError.invalidDateRange { } catch { XCTFail("Unexpected error: \(error)") }
     }
 }

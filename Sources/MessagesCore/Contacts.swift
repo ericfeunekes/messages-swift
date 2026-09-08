@@ -26,6 +26,18 @@ public struct ContactPerson: Codable, Sendable, Hashable {
     }
 }
 
+/// Results from a source lookup. Unresolved handles must not be treated as
+/// uniquely resolved: the source cannot guarantee complete candidate coverage.
+public struct ContactLookup: Sendable {
+    public let people: [ContactPerson]
+    public let unresolvedHandles: Set<String>
+
+    public init(people: [ContactPerson], unresolvedHandles: Set<String> = []) {
+        self.people = people
+        self.unresolvedHandles = unresolvedHandles
+    }
+}
+
 /// Explicit setup binding. The application never derives this value from a
 /// container display name or type.
 public struct ContactsContainerBinding: Codable, Sendable, Hashable {
@@ -45,14 +57,14 @@ public enum ContactsDirectoryError: Error, Equatable, Sendable {
 /// people they use from this snapshot; this protocol does not merge sources.
 public protocol ContactsDirectorySource {
     func allContacts(in binding: ContactsContainerBinding) throws -> [ContactPerson]
-    func contacts(in binding: ContactsContainerBinding, identities: Set<ContactIdentity>, matchingHandles: Set<String>) throws -> [ContactPerson]
+    func contacts(in binding: ContactsContainerBinding, identities: Set<ContactIdentity>, matchingHandles: Set<String>) throws -> ContactLookup
 }
 
 public extension ContactsDirectorySource {
-    func contacts(in binding: ContactsContainerBinding, identities: Set<ContactIdentity>, matchingHandles: Set<String> = []) throws -> [ContactPerson] {
-        try allContacts(in: binding).filter { person in
+    func contacts(in binding: ContactsContainerBinding, identities: Set<ContactIdentity>, matchingHandles: Set<String> = []) throws -> ContactLookup {
+        ContactLookup(people: try allContacts(in: binding).filter { person in
             identities.contains(person.identity) || person.handles.contains { matchingHandles.contains(normalizedContactHandle($0)) }
-        }
+        })
     }
 }
 

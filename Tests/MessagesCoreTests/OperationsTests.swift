@@ -6,6 +6,7 @@ import CSQLite
 private final class OperationDirectory: ContactsDirectorySource, @unchecked Sendable {
     var people: [ContactPerson]
     var allCalls = 0
+    var unresolvedHandles: Set<String> = []
     var subsetCalls: [Set<ContactIdentity>] = []
     init(_ people: [ContactPerson]) { self.people = people }
     func allContacts(in binding: ContactsContainerBinding) throws -> [ContactPerson] {
@@ -13,10 +14,10 @@ private final class OperationDirectory: ContactsDirectorySource, @unchecked Send
         allCalls += 1
         return people
     }
-    func contacts(in binding: ContactsContainerBinding, identities: Set<ContactIdentity>, matchingHandles: Set<String>) throws -> [ContactPerson] {
+    func contacts(in binding: ContactsContainerBinding, identities: Set<ContactIdentity>, matchingHandles: Set<String>) throws -> ContactLookup {
         guard binding.containerID == "fixture" else { throw ContactsDirectoryError.selectedContainerMissing(binding.containerID) }
         subsetCalls.append(identities)
-        return people.filter { identities.contains($0.identity) || $0.handles.contains { matchingHandles.contains(normalizedContactHandle($0)) } }
+        return ContactLookup(people: people.filter { identities.contains($0.identity) || $0.handles.contains { matchingHandles.contains(normalizedContactHandle($0)) } }, unresolvedHandles: unresolvedHandles)
     }
 }
 
@@ -61,6 +62,17 @@ final class OperationsTests: XCTestCase, @unchecked Sendable {
         if let seedPeople { try state.seedInitialCache(seedPeople, now: seedDate ?? now) }
         return (MessagesOperations(store: MessageStore(path: root.appendingPathComponent("chat.db").path), directory: directory, binding: ContactsContainerBinding(containerID: "fixture"), state: state), directory, stateDirectory)
     }
+    func testUncertainPhoneLookupReturnsCandidatesWithoutAssigningIdentity() async throws {
+        let alice = person("a", "Alice", ["+15550000001"])
+        let (ops, directory, _) = try fixture([alice], seedPeople: [alice], seedDate: now)
+        directory.unresolvedHandles = ["+15550000001"]
+        let page = try await ops.readMessages(ReadMessagesInput(chatID: "chat-phone"), now: now)
+        XCTAssertNil(page.chat.participants.first?.sourceIdentity)
+        XCTAssertNil(page.messages.first?.sender?.sourceIdentity)
+        XCTAssertEqual(page.unresolvedContactHandles, ["+15550000001"])
+        XCTAssertEqual(page.contactCandidates.map(\.identity.id), ["a"])
+    }
+
     func testWarmReadDoesNotLoseUncachedSharedHandleOwner() async throws {
         let alice = person("a", "Alice", ["+15550000001"])
         let bob = person("b", "Bob", ["+15550000001"])

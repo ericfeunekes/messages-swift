@@ -5,6 +5,8 @@ public enum MessageStoreError: Error, LocalizedError, Sendable {
   case invalidLimit(Int)
   case invalidDateRange
   case cursorFilterMismatch
+  case databaseReplaced
+  case databaseIdentityUnavailable(Int32)
   case missingSchema(String)
   case sqlite(String)
 
@@ -12,6 +14,8 @@ public enum MessageStoreError: Error, LocalizedError, Sendable {
     switch self {
     case .invalidLimit(let value): return "Page limit must be between 1 and 500, got \(value)."
     case .invalidDateRange: return "The start date must be earlier than the end date."
+    case .databaseIdentityUnavailable: return "SQLite could not verify the opened database identity; restart with a fresh store."
+    case .databaseReplaced: return "The opened Messages database was moved or replaced; create a new store and restart the query."
     case .cursorFilterMismatch: return "The continuation cursor does not match the requested filter."
     case .missingSchema(let detail): return "The Messages database is missing required schema: \(detail)."
     case .sqlite(let detail): return detail
@@ -21,31 +25,45 @@ public enum MessageStoreError: Error, LocalizedError, Sendable {
 
 public final class MessageStore: @unchecked Sendable {
   private let path: String
+  private let lock = NSLock()
+  private let instanceID = UUID().uuidString
+  private var connection: OpaquePointer?
 
-  public init(path: String) {
-    self.path = path
-  }
+  public init(path: String) { self.path = path }
 
-  func withSnapshot<T>(_ work: (OpaquePointer, MessageSchema, Int64) throws -> T) throws -> T {
-    let generation = try databaseGeneration()
-    var database: OpaquePointer?
-    let result = sqlite3_open_v2(path, &database, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil)
-    guard result == SQLITE_OK, let database else {
-      defer { if let database { sqlite3_close_v2(database) } }
-      throw MessageStoreError.sqlite("Could not open Messages database at \(path): \(sqliteMessage(database))")
-    }
-    defer { sqlite3_close_v2(database) }
+  deinit { if let connection { sqlite3_close_v2(connection) } }
+
+  /// One connection owns the database instance for this store's lifetime. Never
+  /// reopen by pathname: a cursor from another instance cannot select this one.
+  func withSnapshot<T>(_ work: (OpaquePointer, MessageSchema, String) throws -> T) throws -> T {
+    lock.lock()
+    defer { lock.unlock() }
+    let database = try openedConnection()
+    try rejectMovedDatabase(database)
     try sqlite(database, "BEGIN")
     defer { _ = try? sqlite(database, "ROLLBACK") }
-    return try work(database, try MessageSchema(database: database), generation)
+    let result = try work(database, try MessageSchema(database: database), instanceID)
+    try rejectMovedDatabase(database)
+    return result
   }
 
-  private func databaseGeneration() throws -> Int64 {
-    let attributes = try FileManager.default.attributesOfItem(atPath: path)
-    guard let number = attributes[.systemFileNumber] as? NSNumber else {
-      throw MessageStoreError.sqlite("Could not determine the Messages database file identity.")
+  private func openedConnection() throws -> OpaquePointer {
+    if let connection { return connection }
+    var opened: OpaquePointer?
+    let status = sqlite3_open_v2(path, &opened, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil)
+    guard status == SQLITE_OK, let opened else {
+      if let opened { sqlite3_close_v2(opened) }
+      throw MessageStoreError.sqlite("Could not open Messages database")
     }
-    return number.int64Value
+    connection = opened
+    return opened
+  }
+
+  private func rejectMovedDatabase(_ database: OpaquePointer) throws {
+    var moved: Int32 = 0
+    let result = sqlite3_file_control(database, "main", SQLITE_FCNTL_HAS_MOVED, &moved)
+    guard result == SQLITE_OK else { throw MessageStoreError.databaseIdentityUnavailable(result) }
+    if moved != 0 { throw MessageStoreError.databaseReplaced }
   }
 }
 

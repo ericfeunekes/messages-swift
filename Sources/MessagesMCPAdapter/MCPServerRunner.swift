@@ -100,6 +100,8 @@ public enum MCPServerRunner {
             case .invalidLimit: return "invalid_limit"
             case .invalidDateRange: return "invalid_date_range"
             case .cursorFilterMismatch: return "cursor_mismatch"
+            case .databaseReplaced: return "database_replaced"
+            case .databaseIdentityUnavailable: return "database_check_failed"
             case .missingSchema: return "unsupported_database_schema"
             case .sqlite: return "database_error"
             }

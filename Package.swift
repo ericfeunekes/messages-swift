@@ -18,5 +18,6 @@ let package = Package(
         .executableTarget(name: "MessagesMCP", dependencies: ["MessagesCore", "MessagesMCPAdapter"]),
         .executableTarget(name: "MCPTestServer", dependencies: ["MessagesCore", "MessagesMCPAdapter"], path: "Tests/Fixtures/MCPServer"),
         .testTarget(name: "MessagesCoreTests", dependencies: ["MessagesCore", "CSQLite"]),
+        .testTarget(name: "MessagesRuntimeTests", dependencies: ["MessagesCore", "MessagesMCPAdapter", "CSQLite"]),
     ]
 )

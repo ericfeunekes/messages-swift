@@ -27,7 +27,7 @@ This is the register of unresolved requirements and design choices. It separates
 ## Platform and runtime
 
 - **Platform floor:** proposed macOS 14+, reflecting the reviewed public Swift core, with Intel as the first tested architecture. Older Intel macOS support and Apple Silicon release coverage are not yet commitments.
-- **Dependency:** public `IMsgCore` dependency versus a narrow maintained source adaptation is unresolved. The choice depends on whether its public API can express the required filters and descending continuation without fetching all history.
+- **Dependency:** the public IMsgCore builds on Intel, but its unchanged public API cannot express the required descending continuation, membership filtering, explicit decoding failures and arbitrary-range counts. Source seams are internal. A narrow maintained read/query adaptation is the supported recommendation; exact packaging and API contracts remain implementation decisions.
 - **MCP integration:** a native Intel Swift fixture passed independent protocol tests; see [validation](validation.md#preparatory-evidence-september-8-2026). Actual desktop discovery, image rendering and normal agent/client approval remain open. A separate app-server probe was blocked before initialization; this does not establish a Messages or MCP product failure.
 
 ## Message interpretation
@@ -42,7 +42,7 @@ Proposed initial targets on the Intel reference machine:
 - one filtered history page: p95 below 500 ms;
 - no-match decoded-body search over a controlled 100,000-message fixture: below 5 seconds.
 
-These are proposed targets, not measurements. Include attributed-body fixtures and report peak memory. If the no-index design misses the accepted budget, compare bounded search and a derived-text index using measurements and maintenance costs. Do not silently narrow search, omit decoded text or add an index.
+These targets remain proposed. A controlled 100,000-message release benchmark now measures approximately 12 seconds for rare/no-match decoded-body search, with correct results, so the proposed five-second target is not met. See [validation](validation.md#preparatory-evidence-september-8-2026) for the fixture and measurement limits. The next bounded experiment removes repeated prefix rescans while preserving the workload and search semantics. Only after that measurement should an index or search-scope tradeoff be considered; do not silently narrow search or omit decoded text.
 
 ## Requirements completion
 

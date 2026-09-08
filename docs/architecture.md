@@ -52,7 +52,7 @@ The following differences require implementation work rather than a cosmetic ada
 - Enriched name resolution, saved aliases and the bounded frequent-contact cache are this project's operation layer.
 - Attachment paths and metadata still need MCP image presentation and clear multiple-file send outcomes.
 
-Choose a pinned public dependency or a narrow maintained source adaptation after proving the required query contract. Do not fetch all history merely to work around an unsuitable API. Preserve applicable upstream license notices and test expectations.
+The preparatory build and query probe support a narrow maintained adaptation of the public read/query/decoding code: required connection and decoder seams are internal, so an external wrapper cannot supply the complete contract unchanged. Keep the adaptation small and omit unneeded CLI/private-helper code. Do not fetch complete history through a public API merely to emulate missing filters or continuation. Preserve applicable upstream license notices and test expectations.
 
 ## Approval ownership
 
@@ -62,6 +62,6 @@ Verify the normal host flow with an inert operation before enabling real sends. 
 
 ## Simplicity and performance
 
-Start with no message-body index or duplicate history store. This is a hypothesis to validate, not a performance guarantee: searching decoded attributed bodies may scan a substantial part of the database. Measure broad no-match searches as well as successful narrow searches. The [validation plan](validation.md) and [open decisions](decisions.md) own the performance budget and any subsequent index decision.
+Start with no message-body index or duplicate history store. The initial release benchmark returned correct decoded-body search results but took approximately 12 seconds on a controlled 100,000-message fixture, above the proposed budget. Repeated prefix rescans are the next optimization candidate to test before adding persistent indexing. The [validation plan](validation.md) and [open decisions](decisions.md) own the measurement limits, performance budget and any subsequent index decision.
 
 The people cache uses FIFO eviction and refreshes records daily or on use, whichever is sooner. Refresh and eviction order are separate: an existing record's refresh does not move it to the back of the queue under the proposed interpretation. Keep user aliases immediately consistent and independent of cache refresh/eviction. A process may retain hot lookups while connected to MCP, but persistence must also work across process restarts. Daily refresh while active and overdue refresh at startup avoid requiring a separate daemon.

@@ -10,6 +10,12 @@ This proves local protocol transport, not desktop discovery, image rendering or 
 
 A metadata-only public Contacts Swift probe also ran on Intel. Existing Contacts permission was undetermined, so it exited without fetching contacts or changing permission. Public API research supports selected-container and non-unified fetches; live account isolation, freshness and lookup cost remain unproven.
 
+The pinned public IMsgCore built on Intel Swift 6.1.2. The unmodified selected test suite failed compilation when the compiler timed out on a concatenated byte-array expression. Splitting that expression into equivalent typed appends preserved its bytes and assertions; 76 selected synthetic tests then passed. This is not a pristine upstream-suite pass.
+
+A real SQLite probe with 100,000 synthetic rows passed descending-pagination checks for equal timestamps, an insertion fence including backdated arrivals, half-open dates, pre-limit filters and conversation-membership versus sender semantics. Its warm SQL-only p95 was 1.36 ms; that excludes Swift decoding and name enrichment and is not the complete history-operation latency.
+
+The public-core release search returned correct rare and absent results on a 100,000-message, approximately 36 MiB on-disk fixture with 50% attributed-only bodies. In the measured repeat, each search took 11.91–12.04 seconds, failing the proposed five-second budget. Whole-process peak RSS was 44.02 MiB, including fixture setup and six searches; no isolated allocation or cold-disk claim is made. Repeated prefix scanning is a source-backed optimization candidate. A single-pass experiment is pending under the unchanged fixture and result semantics, without an index.
+
 ## Source and fixture policy
 
 Reuse suitable public Swift parser, schema, Contacts and attachment fixtures with their licenses and expected outcomes intact. Fixture tests should exercise real SQLite queries and decoding; mocks are reserved for controlled variations or failures. Do not commit real conversations, contact directories, attachment files or user aliases.

@@ -10,7 +10,7 @@ This repository currently contains the requirements and design. There is no inst
 
 - Find a conversation by a person's name, a group name or a saved alias.
 - Read and search history with contact names and conversation details already joined into the results.
-- Keep roughly 100 frequent contacts available in a small local cache; resolve other people on demand.
+- Use a selected Google Contacts account as the intended contact authority. Keep roughly 100 frequent contacts in a derived local cache and resolve other people on demand.
 - Read image attachments and summarize message activity.
 - Draft without sending. Before a send, the agent shows the exact recipients, content and files for confirmation, then uses its client's normal approval path.
 

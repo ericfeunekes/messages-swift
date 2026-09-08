@@ -16,6 +16,9 @@ This is the register of unresolved requirements and design choices. It separates
 
 ## Directory and cache
 
+- **Contact authority:** Google Contacts associated with the user’s Gmail account; selected by the owner. The account identifier belongs in private setup, not public documentation.
+- **Contact access:** local macOS Contacts synchronization versus direct Google access is open. Verify selected-account scoping and source identity before choosing. Contact cleanup/migration is a separate task and is not required to be performed by this tool.
+
 - **Ranking:** proposed 100 contacts over a 90-day activity window, with recency breaking ties. Count direct messages sent/received plus group messages authored by that person. Do not credit every group member for every outgoing group message. Owner confirmation requested; all-history or recency-based ranking are alternatives.
 - **Freshness:** proposed fixed 24-hour expiry with refresh-on-use and Contacts-change invalidation while running. No background service. Confirm the freshness requirement before implementation.
 - **Aliases:** proposed local-only names that leave Messages' actual thread names unchanged. Normalized alias collisions require explicit replacement or disambiguation. Clarify if aliases must instead sync across devices or rename actual groups; neither is presently required.

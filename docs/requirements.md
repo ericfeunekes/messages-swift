@@ -9,7 +9,8 @@ The implementation is native Swift, local, lightweight and fast. It exposes type
 ## People and conversations
 
 - Find conversations by contact name, phone number, email address, native Messages name or a saved local alias.
-- Expand a contact to its associated handles using Contacts identity. Do not merge people merely because their display names match.
+- Google Contacts associated with the user’s selected Gmail account is the intended authoritative contact directory. The local cache is derived data, not a second contact-maintenance system.
+- Expand a contact to its associated handles using source identity. Do not merge people merely because their display names match. The access adapter must preserve the selected account boundary.
 - Return stable chat identity, readable label, native name, saved alias, participants, service, recent activity and unread information together.
 - Match conversations containing all named participants. Exact membership excludes additional participants; it is distinct from filtering individual message senders.
 - Surface ambiguous contacts and conversations as candidate matches with enough context to choose. A ranked first result is not authorization to choose a send destination.
@@ -68,6 +69,7 @@ Image access resolves an attachment belonging to a message result. It is not an 
 - Existing public Swift source and tests may be reused with their licenses. The implementation does not wrap the imsg CLI as its domain layer.
 - No decompilation, disassembly, proprietary binary redistribution, private-framework injection or macOS security-setting changes.
 - No requirement to edit or unsend messages, emit typing indicators/read receipts, create polls, manage accounts or provide a remote messaging bot.
+- Contact reconciliation, deduplication, migration and edits to the authoritative contact directory are separate work. This project consumes the resulting directory and does not merge or move contacts.
 - No separate daemon, cloud service, embedded language model or general plugin framework without an accepted use case.
 
 Acceptance evidence belongs in [validation](validation.md); this document defines intended behavior, not a claim that it is already implemented.

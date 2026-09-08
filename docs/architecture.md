@@ -12,7 +12,7 @@ flowchart TD
     Operations --> History[Message queries and decoding]
     Operations --> Send[Messages send integration]
     Operations --> Images[Native image reader]
-    Directory --> Contacts[Public Contacts framework]
+    Directory --> Contacts[Selected Google Contacts account adapter]
     Directory --> State[Contact cache and saved aliases]
     Directory --> DB[Messages database: read only]
     History --> DB
@@ -26,7 +26,7 @@ Use the official Swift MCP SDK for the adapter after verifying compatible pinned
 
 ## Conversation directory
 
-The directory joins chat records with Contacts names and local aliases before returning results. The proposed display-label order is saved alias, native thread name, then participant names; native name and participants remain visible alongside the label.
+The directory joins chat records with names from the selected Google Contacts account and local thread aliases before returning results. Google Contacts is the intended authority; macOS Contacts is a possible access layer when it faithfully exposes that account, not an additional authority. The proposed display-label order is saved alias, native thread name, then participant names; native name and participants remain visible alongside the label.
 
 Person lookup expands contact handles; conversation lookup matches membership. A request for a conversation with a person must include the other participants' messages, not only rows sent by that person. Missing and ambiguous names are distinct results.
 
@@ -38,7 +38,7 @@ Cache data supports discovery and display. Resolve the current destination and p
 
 ## Message integration and upstream reuse
 
-Open Apple's Messages database read-only. Use the public Contacts framework for names and the public Messages scripting surface for supported sends. Initial OS permission setup is separate from the conversational approval policy in [requirements](requirements.md#reading-drafting-and-sending).
+Open Apple's Messages database read-only. Resolve contact names from the selected Google Contacts account, either through correctly scoped macOS synchronization or a direct Google adapter; that access choice remains open. Use the public Messages scripting surface for supported sends. Initial OS permission setup is separate from the conversational approval policy in [requirements](requirements.md#reading-drafting-and-sending).
 
 The reviewed imsg source exposes an in-process `IMsgCore` library and x86_64 builds. Its decoding, schema and attachment code and tests are useful references. Reuse only the needed public components; do not enable its injected helper or private-framework operations.
 

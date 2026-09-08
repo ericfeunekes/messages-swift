@@ -28,22 +28,23 @@ private actor RuntimeStatusSignal {
 
 @main
 @MainActor final class MessagesMenuApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    private enum RuntimeStatus: Equatable {
-        case contactsRequired, sourceRequired, starting, ready, restartRequired, failed
+    enum RuntimeStatus: Equatable {
+        case contactsRequired, messagesRequired, sourceRequired, starting, ready, restartRequired, failed
 
         var menuTitle: String {
             switch self {
             case .contactsRequired: "Contacts access is required"
+            case .messagesRequired: "Messages access needs attention"
             case .sourceRequired: "Choose a Contacts source"
             case .starting: "Starting…"
             case .ready: "Ready"
-            case .restartRequired: "Restart required after source change"
+            case .restartRequired: "Quit and reopen to apply changes"
             case .failed: "Could not start"
             }
         }
     }
 
-    private struct ContactsSource: Hashable {
+    struct ContactsSource: Hashable {
         let identifier: String
         let name: String
         let type: CNContainerType
@@ -66,17 +67,66 @@ private actor RuntimeStatusSignal {
 
     private let socket = UnixSocketServer()
     private let runtimeSignal = RuntimeStatusSignal()
-    private let contactsStore = CNContactStore()
-    private let configurationPath = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/messages-swift/config.json").path
+    @MainActor struct Services {
+        var authorization: () -> CNAuthorizationStatus = { CNContactStore.authorizationStatus(for: .contacts) }
+        var requestContacts: @MainActor () async throws -> Bool = { try await CNContactStore().requestAccess(for: .contacts) }
+        var sources: () throws -> [ContactsSource] = {
+            try CNContactStore().containers(matching: nil).map { ContactsSource(identifier: $0.identifier, name: $0.name, type: $0.type) }
+        }
+        var readAccess: (String) -> MessagesReadAccess = { MessagesReadAccess.check(path: $0) }
+        var openURL: (URL) -> Void = { NSWorkspace.shared.open($0) }
+        var revealApp: (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
+        var presentWindow: @MainActor (NSWindow) -> Void = {
+            $0.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+    private let services: Services
+    private let configurationPath: String
+
+    override convenience init() {
+        self.init(services: Services(), configurationPath: FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/messages-swift/config.json").path)
+    }
+
+    init(services: Services, configurationPath: String) {
+        self.services = services
+        self.configurationPath = configurationPath
+        super.init()
+    }
     private var statusItem: NSStatusItem!
     private var runtime: Task<Void, Never>?
     private var statusWatcher: Task<Void, Never>?
-    private var status: RuntimeStatus = .contactsRequired
+    private(set) var status: RuntimeStatus = .contactsRequired
     private var sources: [ContactsSource] = []
-    private var settingsWindow: NSWindow?
-    private var sourcePicker: NSPopUpButton?
-    private var settingsMessage: NSTextField?
+    private(set) var settingsWindow: NSWindow?
+    private(set) var sourcePicker: NSPopUpButton?
+    private(set) var settingsMessage: NSTextField?
+    private var contactsStatusLabel: NSTextField?
+    private var messagesStatusLabel: NSTextField?
+    private(set) var messagesAccess: MessagesReadAccess = .unavailable
+    private var setupMessage = ""
+    private var sourceMessage = ""
+    private(set) var requestingContacts = false
+
+    private var contactsAccess: ContactsSetupAccess {
+        switch services.authorization() {
+        case .notDetermined: .notRequested
+        case .denied: .denied
+        case .restricted: .restricted
+        case .authorized: .granted
+        @unknown default: .unavailable
+        }
+    }
+
+    private var messagesDescription: String {
+        switch messagesAccess {
+        case .readable: "Database file is readable"
+        case .denied: "Access denied — enable Full Disk Access"
+        case .missing: "Database file not found. Check the configured path."
+        case .unavailable: "Database file could not be read. Check the path and file."
+        }
+    }
 
     static func main() {
         let app = NSApplication.shared
@@ -104,6 +154,13 @@ private actor RuntimeStatusSignal {
         menu.delegate = self
         statusItem.menu = menu
         refreshSetupState()
+        if status != .starting && status != .ready { showSettings() }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        guard statusItem != nil else { return }
+        refreshSetupState()
+        populateSettings()
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) { rebuildMenu(menu) }
@@ -111,10 +168,10 @@ private actor RuntimeStatusSignal {
     private func rebuildMenu(_ menu: NSMenu) {
         menu.removeAllItems()
         menu.addItem(NSMenuItem(title: "Status: \(status.menuTitle)", action: nil, keyEquivalent: ""))
-        let authorization = CNContactStore.authorizationStatus(for: .contacts)
+        let authorization = services.authorization()
         menu.addItem(NSMenuItem(title: "Contacts: \(contactsDescription(authorization))", action: nil, keyEquivalent: ""))
-        if authorization != .authorized { menu.addItem(item(title: "Request Contacts Access", action: #selector(requestContacts))) }
-        if status == .failed { menu.addItem(item(title: "Open Full Disk Access Settings", action: #selector(openFullDiskAccessSettings))) }
+        menu.addItem(NSMenuItem(title: "Messages: \(messagesDescription)", action: nil, keyEquivalent: ""))
+        menu.addItem(item(title: "Set Up Permissions…", action: #selector(setUpPermissions)))
         menu.addItem(.separator())
         menu.addItem(item(title: "Settings…", action: #selector(showSettings)))
         menu.addItem(.separator())
@@ -127,97 +184,163 @@ private actor RuntimeStatusSignal {
         return item
     }
 
-    @objc private func requestContacts() {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let granted = try await CNContactStore().requestAccess(for: .contacts)
-                if granted { self.refreshSetupState(); self.showSettings() }
-                else { self.status = .contactsRequired; self.refreshMenu() }
-            } catch {
-                self.status = .contactsRequired
-                self.refreshMenu()
+    @objc func setUpPermissions() {
+        showSettings()
+        guard !requestingContacts else { return }
+        switch contactsAccess.action {
+        case .request:
+            requestingContacts = true
+            setupMessage = "Respond to the macOS Contacts request."
+            populateSettings()
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    _ = try await self.services.requestContacts()
+                    self.setupMessage = ""
+                } catch {
+                    self.setupMessage = "Contacts access could not be requested. Check Contacts in System Settings."
+                }
+                self.requestingContacts = false
+                self.refreshSetupState()
+                self.guideMessagesAccess()
             }
+        case .settings:
+            setupMessage = "Enable Messages Swift in Privacy & Security → Contacts, then click Check Again."
+            openContactsSettings()
+            guideMessagesAccess(openSettings: false)
+        case .explain:
+            setupMessage = "Contacts access is restricted or unavailable. Check this Mac’s privacy restrictions."
+            guideMessagesAccess(openSettings: false)
+        case .none:
+            refreshSetupState()
+            guideMessagesAccess()
         }
     }
 
-    @objc private func showSettings() {
-        refreshSources()
+    private func guideMessagesAccess(openSettings: Bool = true) {
+        if messagesAccess == .denied {
+            setupMessage += " Enable Messages Swift in Full Disk Access. If absent, add the app revealed in Finder. Then click Check Again."
+            if openSettings { openFullDiskAccessSettings() }
+            else { setupMessage += " Use the Full Disk Access button below." }
+        }
+        populateSettings()
+    }
+
+    @objc func checkAgain() {
+        setupMessage = ""
+        refreshSetupState()
+        populateSettings()
+    }
+
+    @objc private func openContactsSettings() {
+        services.openURL(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Contacts")!)
+    }
+
+    @objc func showSettings() {
+        refreshSetupState()
         if let settingsWindow {
             populateSettings()
-            settingsWindow.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            services.presentWindow(settingsWindow)
             return
         }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 190), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 430), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Messages Swift Settings"
         window.isReleasedWhenClosed = false
         window.delegate = self
         let content = NSView(frame: window.contentView!.bounds)
         content.autoresizingMask = [.width, .height]
+        let contactsLabel = label("")
+        contactsLabel.frame = NSRect(x: 20, y: 377, width: 370, height: 24)
+        contactsStatusLabel = contactsLabel
+        content.addSubview(contactsLabel)
+        let contactsButton = NSButton(title: "Contacts Settings…", target: self, action: #selector(openContactsSettings))
+        contactsButton.frame = NSRect(x: 390, y: 375, width: 170, height: 28)
+        content.addSubview(contactsButton)
+        let messagesLabel = label("")
+        messagesLabel.frame = NSRect(x: 20, y: 317, width: 365, height: 48)
+        messagesLabel.maximumNumberOfLines = 2
+        messagesStatusLabel = messagesLabel
+        content.addSubview(messagesLabel)
+        let messagesButton = NSButton(title: "Full Disk Access…", target: self, action: #selector(openFullDiskAccessSettings))
+        messagesButton.frame = NSRect(x: 390, y: 325, width: 170, height: 28)
+        content.addSubview(messagesButton)
+        let setup = NSButton(title: "Set Up Permissions", target: self, action: #selector(setUpPermissions))
+        setup.frame = NSRect(x: 20, y: 275, width: 170, height: 28)
+        content.addSubview(setup)
+        let check = NSButton(title: "Check Again", target: self, action: #selector(checkAgain))
+        check.frame = NSRect(x: 200, y: 275, width: 120, height: 28)
+        content.addSubview(check)
         let explanation = label("Choose the account whose contacts you want to use. Its contacts must already be synchronized with this Mac.")
-        explanation.frame = NSRect(x: 20, y: 125, width: 420, height: 44)
+        explanation.frame = NSRect(x: 20, y: 210, width: 540, height: 44)
         explanation.lineBreakMode = .byWordWrapping
         explanation.maximumNumberOfLines = 3
         content.addSubview(explanation)
-        let picker = NSPopUpButton(frame: NSRect(x: 20, y: 80, width: 420, height: 28), pullsDown: false)
+        let picker = NSPopUpButton(frame: NSRect(x: 20, y: 170, width: 540, height: 28), pullsDown: false)
         picker.target = self
         picker.action = #selector(sourceSelectionChanged)
         sourcePicker = picker
         content.addSubview(picker)
         let message = label("")
-        message.frame = NSRect(x: 20, y: 47, width: 420, height: 20)
+        message.frame = NSRect(x: 20, y: 48, width: 540, height: 112)
+        message.maximumNumberOfLines = 6
+        message.lineBreakMode = .byWordWrapping
         message.textColor = .secondaryLabelColor
         settingsMessage = message
         content.addSubview(message)
         let save = NSButton(title: "Save Source", target: self, action: #selector(saveSelectedSource))
-        save.frame = NSRect(x: 340, y: 12, width: 100, height: 28)
+        save.frame = NSRect(x: 460, y: 12, width: 100, height: 28)
         content.addSubview(save)
         window.contentView = content
         settingsWindow = window
         populateSettings()
         window.center()
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        services.presentWindow(window)
     }
 
-    @objc private func sourceSelectionChanged() { settingsMessage?.stringValue = "Save to use this source. Changes take effect after restart." }
+    @objc private func sourceSelectionChanged() { sourceMessage = "Save to use this source. Changes take effect after restart."; updateSettingsStatus() }
 
-    @objc private func saveSelectedSource() {
-        guard CNContactStore.authorizationStatus(for: .contacts) == .authorized else {
+    @objc func saveSelectedSource() {
+        defer { updateSettingsStatus() }
+        guard services.authorization() == .authorized else {
             status = .contactsRequired
-            settingsMessage?.stringValue = "Grant Contacts access before selecting a source."
+            sourceMessage = "Grant Contacts access before selecting a source."
             refreshMenu()
             return
         }
-        guard let sourcePicker, sourcePicker.indexOfSelectedItem > 0 else {
-            settingsMessage?.stringValue = "Choose a source before saving."
+        guard let sourcePicker, sourcePicker.indexOfSelectedItem > 0,
+              sources.indices.contains(sourcePicker.indexOfSelectedItem - 1) else {
+            sourceMessage = "Choose a source before saving."
             return
         }
         let source = sources[sourcePicker.indexOfSelectedItem - 1]
         do {
-            let existing = try? RuntimeConfiguration.load(from: configurationPath)
+            let existing = FileManager.default.fileExists(atPath: configurationPath)
+                ? try RuntimeConfiguration.load(from: configurationPath) : nil
             let home = FileManager.default.homeDirectoryForCurrentUser
             let databasePath = existing?.databasePath ?? home.appendingPathComponent("Library/Messages/chat.db").path
             let stateDirectory = existing?.stateDirectory ?? home.appendingPathComponent("Library/Application Support/messages-swift").path
             try RuntimeConfiguration(containerID: source.identifier, databasePath: databasePath, stateDirectory: stateDirectory).save(to: configurationPath)
             if runtime == nil {
                 refreshSetupState()
-                settingsMessage?.stringValue = "Saved. Starting Messages Swift now."
+                sourceMessage = "Saved."
             } else {
                 status = .restartRequired
-                settingsMessage?.stringValue = "Saved. Quit and reopen Messages Swift to use the new source."
+                sourceMessage = "Saved. Quit and reopen Messages Swift to use the new source."
                 refreshMenu()
             }
         } catch {
             status = .failed
-            settingsMessage?.stringValue = "Could not save the selected source."
+            sourceMessage = "Could not save the selected source."
             refreshMenu()
         }
     }
 
     private func refreshSetupState() {
-        guard CNContactStore.authorizationStatus(for: .contacts) == .authorized else { status = .contactsRequired; refreshMenu(); return }
+        let path = (try? RuntimeConfiguration.load(from: configurationPath).databasePath)
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Messages/chat.db").path
+        messagesAccess = services.readAccess(path)
+        defer { updateSettingsStatus() }
+        guard services.authorization() == .authorized else { status = .contactsRequired; refreshMenu(); return }
         refreshSources()
         guard let configuration = try? RuntimeConfiguration.load(from: configurationPath),
               sources.contains(where: { $0.identifier == configuration.containerID }) else {
@@ -225,14 +348,16 @@ private actor RuntimeStatusSignal {
             refreshMenu()
             return
         }
+        guard messagesAccess == .readable else { status = .messagesRequired; refreshMenu(); return }
+        if runtime != nil && status != .ready && status != .starting { status = .restartRequired }
         startRuntimeIfConfigured()
         refreshMenu()
     }
 
     private func refreshSources() {
-        guard CNContactStore.authorizationStatus(for: .contacts) == .authorized else { sources = []; return }
+        guard services.authorization() == .authorized else { sources = []; return }
         do {
-            sources = try contactsStore.containers(matching: nil).map { ContactsSource(identifier: $0.identifier, name: $0.name, type: $0.type) }.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+            sources = try services.sources().sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
         } catch {
             sources = []
             status = .failed
@@ -247,16 +372,19 @@ private actor RuntimeStatusSignal {
         let selectedID = try? RuntimeConfiguration.load(from: configurationPath).containerID
         if let selectedID, let index = sources.firstIndex(where: { $0.identifier == selectedID }) { sourcePicker.selectItem(at: index + 1) }
         else { sourcePicker.selectItem(at: 0) }
-        if CNContactStore.authorizationStatus(for: .contacts) != .authorized {
-            settingsMessage?.stringValue = "Contacts access is required before sources can be listed."
-            sourcePicker.isEnabled = false
-        } else if sources.isEmpty {
-            settingsMessage?.stringValue = "No Contacts sources are available."
-            sourcePicker.isEnabled = false
-        } else {
-            settingsMessage?.stringValue = ""
-            sourcePicker.isEnabled = true
-        }
+        sourcePicker.isEnabled = contactsAccess.action == .none && !sources.isEmpty
+        updateSettingsStatus()
+    }
+
+    private func updateSettingsStatus() {
+        contactsStatusLabel?.stringValue = "Contacts: \(contactsDescription(services.authorization()))"
+        messagesStatusLabel?.stringValue = "Messages: \(messagesDescription)"
+        var messages = [setupMessage, sourceMessage]
+        if contactsAccess.action != .none { messages.append("Contacts access is required to list sources.") }
+        else if sources.isEmpty { messages.append("No Contacts sources are available.") }
+        if status == .restartRequired || status == .failed { messages.append("Quit and reopen Messages Swift after correcting setup. The existing runtime cannot be restarted here.") }
+        else { messages.append(status.menuTitle) }
+        settingsMessage?.stringValue = messages.filter { !$0.isEmpty }.joined(separator: "\n")
     }
 
     private func startRuntimeIfConfigured() {
@@ -286,14 +414,16 @@ private actor RuntimeStatusSignal {
         }
     }
 
-    private func runtimeDidBecomeReady() { guard status == .starting else { return }; status = .ready; refreshMenu() }
+    private func runtimeDidBecomeReady() { guard status == .starting else { return }; status = .ready; refreshMenu(); updateSettingsStatus() }
     private func runtimeDidFail() {
         guard status != .restartRequired else { return }
         status = .failed
-        settingsMessage?.stringValue = "Messages Swift could not start. Check the selected Contacts source and Messages access. If macOS blocks Messages access, grant this app Full Disk Access, then restart it."
+        setupMessage = "Messages Swift could not start. Check the source, database and saved configuration."
+        updateSettingsStatus()
+        showSettings()
         refreshMenu()
     }
-    private func refreshMenu() { statusItem.menu.map(rebuildMenu) }
+    private func refreshMenu() { statusItem?.menu.map(rebuildMenu) }
 
     private func contactsDescription(_ status: CNAuthorizationStatus) -> String {
         switch status {
@@ -309,7 +439,8 @@ private actor RuntimeStatusSignal {
 
     @objc private func openFullDiskAccessSettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") else { return }
-        NSWorkspace.shared.open(url)
+        services.revealApp(Bundle.main.bundleURL)
+        services.openURL(url)
     }
 }
 

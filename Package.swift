@@ -21,6 +21,6 @@ let package = Package(
         .executableTarget(name: "MCPTestServer", dependencies: ["MessagesCore", "MessagesMCPAdapter"], path: "Tests/Fixtures/MCPServer"),
         .executableTarget(name: "MCPBridgeTestClient", dependencies: ["MessagesMCPAdapter"], path: "Tests/Fixtures/BridgeClient"),
         .testTarget(name: "MessagesCoreTests", dependencies: ["MessagesCore", "CSQLite"]),
-        .testTarget(name: "MessagesRuntimeTests", dependencies: ["MessagesCore", "MessagesMCPAdapter", "CSQLite"]),
+        .testTarget(name: "MessagesRuntimeTests", dependencies: ["MessagesCore", "MessagesMCPAdapter", "MessagesMenuApp", "CSQLite"]),
     ]
 )

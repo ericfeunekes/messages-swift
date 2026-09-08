@@ -81,7 +81,10 @@ Install locally from the checkout:
 open "$HOME/Applications/Messages Swift.app"
 ```
 
-The installer builds release binaries and signs the app locally. Quit the app
+The installer builds release binaries and signs the app locally. Set
+`MESSAGES_SWIFT_SIGNING_IDENTITY` to a usable certificate identity to sign updates
+consistently; without it, the installer uses ad-hoc signing whose identity changes
+with the build. Quit the app
 before updating. The app has its own Contacts usage declaration and entitlement;
 macOS still requires the user's permission. Signing does not grant access.
 Launch the app normally through Finder or `open`; invoking its nested executable
@@ -154,10 +157,12 @@ chat GUID; search enriches only returned/diagnostic-example chat GUIDs. Name
 discovery may inspect all candidates. Participant and unread joins are batched
 rather than fetched once per unrelated chat.
 
-Warm contact reads use non-unified identifier/email/phone predicates to obtain
-minimal candidate IDs from the local Contacts index. Each candidate's container
-is checked against the explicit binding before fetching names/handles. Foreign
-records are neither materialized, cached nor returned. All selected candidates
+Warm contact reads use non-unified email/phone predicates against the local
+Contacts index. Candidate requests include the identifier and the matching email
+or phone field required by the native predicate. The matching values are transient:
+the operation immediately retains only IDs, checks each candidate's selected
+container, then fetches named person details. Unselected candidates never become
+named results or cache entries. All selected candidates
 are retained, including uncached shared-handle owners. Phone matching is documented
 best effort. One exact normalized selected-source owner retains its joined name
 and identity on warm reads. Approximate-only or multiple exact owners remain

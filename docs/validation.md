@@ -145,8 +145,9 @@ concurrent pathname exchange and normal WAL append visibility. A 10,000-unrelate
 fixture measures SQLite instruction work for exact retrieval; it makes no latency
 claim. Busy-group fixtures distinguish actual authors from passive members.
 
-Controlled Contacts adapter tests inspect identifier-only requests, non-unified
-fetches, candidate-container checks before materialization, foreign/missing IDs,
+Controlled Contacts adapter tests inspect the exact identifier-plus-matching-field
+requests, non-unified fetches, candidate-container checks before named person
+fetches, foreign/missing IDs,
 selected duplicate owners and approximate phone candidates. Actual indexed native
 Contacts behavior remains a live permission/isolation/completeness gate. Production
 runtime tests exercise the same composition as main with real SQLite/state and an
@@ -227,3 +228,10 @@ Check Again were visible without clipping. At that check the rebuilt app reporte
 Contacts not requested and Messages access denied; real consent and the final
 end-to-end read remained pending user action. The synthetic suite passed 51 XCTest
 and 37 Swift Testing tests.
+
+A live warm read exposed CNErrorDomain code 2 with a property-not-fetched exception
+in the native Contacts predicate path. Candidate phone/email fetches now request
+the matching field as well as the identifier. Seven focused adapter tests passed,
+including a provider that rejects missing predicate fields, exact key sets and
+selected-container exclusion. These controlled tests do not establish the native
+fix until the installed app passes the same read.

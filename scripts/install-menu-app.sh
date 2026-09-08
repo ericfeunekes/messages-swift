@@ -6,6 +6,7 @@ build_root="$repo_root/.build/release"
 mkdir -p "$repo_root/.scratch"
 staging_root="$(mktemp -d "$repo_root/.scratch/install-menu-app.XXXXXX")"
 app_name="Messages Swift.app"
+signing_identity="${MESSAGES_SWIFT_SIGNING_IDENTITY:--}"
 staged_app="$staging_root/$app_name"
 destination_root="$HOME/Applications"
 destination_app="$destination_root/$app_name"
@@ -26,9 +27,9 @@ install -m 755 "$build_root/messages-mcp" "$staged_app/Contents/MacOS/messages-m
 
 # Sign executable code before the enclosing bundle. This allows the app to request
 # Contacts access under its own identity; it does not alter TCC, Full Disk Access, or quarantine state.
-codesign --force --sign - --options runtime "$staged_app/Contents/MacOS/messages-mcp"
-codesign --force --sign - --options runtime --entitlements "$repo_root/packaging/MessagesSwift.entitlements" "$staged_app/Contents/MacOS/Messages Swift"
-codesign --force --sign - --options runtime --entitlements "$repo_root/packaging/MessagesSwift.entitlements" "$staged_app"
+codesign --force --sign "$signing_identity" --options runtime "$staged_app/Contents/MacOS/messages-mcp"
+codesign --force --sign "$signing_identity" --options runtime --entitlements "$repo_root/packaging/MessagesSwift.entitlements" "$staged_app/Contents/MacOS/Messages Swift"
+codesign --force --sign "$signing_identity" --options runtime --entitlements "$repo_root/packaging/MessagesSwift.entitlements" "$staged_app"
 codesign --verify --deep --strict --verbose=2 "$staged_app"
 
 mkdir -p "$destination_root"

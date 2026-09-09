@@ -612,7 +612,10 @@ handshake timeout/mismatch/EOF, unavailable and unsafe endpoints, reused/string
 request IDs, and 12 MiB JSON in both directions. Delayed-restoration cases
 cancel a queued send both directly and behind more than one input chunk of
 ordinary requests, and assert zero send side effects. Error assertions distinguish
-`not_submitted` connection/handshake failures from `outcome_unknown` after writes. The frame test and handshake-EOF
+`not_submitted` connection/handshake failures from `outcome_unknown` after writes.
+Confirmed-disconnection and delayed-handshake batches include stale client
+responses and notifications; the new backend receives only reinitialization and
+the new requests. The frame test and handshake-EOF
 test first failed against the initial implementation and passed after incremental
 scanning and stdin lifetime handling were corrected.
 

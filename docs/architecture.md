@@ -186,7 +186,10 @@ the bridge first repeats that initialization and sends `notifications/initialize
 to the new backend. It releases the new request only when the negotiated protocol
 version and capabilities still match. A failed connection, failed handshake or
 five-second handshake timeout fails that request; a later request can try again.
-Notifications never open a connection. No timer reconnects an idle session.
+Ordinary notifications and client responses are discarded while disconnected or
+restoring, even when a new request is queued. They cannot cross into a different
+backend session. Restoration becomes ready only after its initialized notification
+is fully written. No timer reconnects an idle session.
 
 | Connection state | Event | Result |
 |---|---|---|

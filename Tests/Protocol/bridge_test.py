@@ -312,3 +312,40 @@ for extra in (False, True):
         c.close()
     run_case('cancel during restoration never submits send; queued work ahead=' + str(extra), cancelled_restore_server, cancelled_restore_client)
     assert effects == []
+
+for during_handshake in (False, True):
+    app_closed = threading.Event()
+    restoring = threading.Event()
+    stale_written = threading.Event()
+    def stale_server(accept):
+        with accept() as conn:
+            peer = Peer(conn); peer.initialize()
+            assert peer.receive() == request(90)
+        app_closed.set()
+        with accept() as conn:
+            peer = Peer(conn); assert peer.receive() == INIT
+            restoring.set(); assert stale_written.wait(5)
+            peer.send({'jsonrpc': '2.0', 'id': 1, 'result': RESULT})
+            assert peer.receive()['method'] == 'notifications/initialized'
+            assert peer.receive() == request(2)
+            peer.send({'jsonrpc': '2.0', 'id': 2, 'result': {}})
+            assert peer.receive() == request(3), 'old-session traffic reached new backend'
+            peer.send({'jsonrpc': '2.0', 'id': 3, 'result': {}})
+            assert conn.recv(1) == b''
+    def stale_client(c):
+        c.initialize(); c.send(request(90))
+        assert c.receive()['error']['data']['disposition'] == 'outcome_unknown'
+        assert app_closed.wait(5)
+        stale = wire({'jsonrpc': '2.0', 'id': 'old-server-request', 'result': {'stale': True}})
+        stale += wire({'jsonrpc': '2.0', 'method': 'notifications/roots/list_changed'})
+        stale += wire({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
+        if during_handshake:
+            c.send(request(2)); assert restoring.wait(5)
+            c.p.stdin.write(stale); c.p.stdin.flush()
+        else:
+            c.p.stdin.write(wire(request(2)) + stale); c.p.stdin.flush()
+        stale_written.set()
+        assert c.receive()['id'] == 2
+        c.send(request(3)); assert c.receive()['id'] == 3
+        c.close()
+    run_case('discard old responses/notifications during restoration=' + str(during_handshake), stale_server, stale_client)

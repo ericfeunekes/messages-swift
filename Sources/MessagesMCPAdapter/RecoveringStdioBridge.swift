@@ -24,6 +24,8 @@ public enum RecoveringStdioBridge {
         var queued: [Frame] = []
         var queuedBytes = 0
         var writingRequest: String?
+        var backendReady = false
+        var writingInitialized = false
         var initialization: Data?
         var initializationID: String?
         var initializationPending = false
@@ -69,6 +71,7 @@ public enum RecoveringStdioBridge {
         func lost() throws {
             if socket >= 0 { close(socket); socket = -1 }
             backend.removeAll(); backendScan = 0; outbound.removeAll(); writingRequest = nil
+            backendReady = false; writingInitialized = false
             queued.removeAll(); queuedBytes = 0; handshakeDeadline = nil
             for request in pending.values { try failure(request, reason: "connection or initialization unavailable") }
             pending.removeAll()
@@ -137,9 +140,13 @@ public enum RecoveringStdioBridge {
                     return
                 }
                 pending[requestKey] = Request(id: id)
-            } else if socket < 0 && queued.isEmpty {
-                // Notifications and client responses never open a connection.
-                return
+            } else {
+                // A queued new request does not make old-session traffic valid.
+                // Only the initial client handshake notification may establish
+                // readiness; restoration sends its own initialized notification.
+                let initialReady = method == "notifications/initialized" && socket >= 0
+                    && negotiated != nil && handshakeDeadline == nil && !writingInitialized
+                guard backendReady || initialReady else { return }
             }
             guard queuedBytes + frame.count + 1 <= frameLimit else { throw StdioSocketBridge.Failure.io }
             queued.append(Frame(data: frame, requestKey: requestKey)); queuedBytes += frame.count + 1
@@ -164,10 +171,12 @@ public enum RecoveringStdioBridge {
             }
             queued.removeFirst(); queuedBytes -= item.data.count + 1
             if method == "initialize" {
+                backendReady = false
                 initialization = item.data; initializationID = item.requestKey
                 initializationPending = true; negotiated = nil
             }
             writingRequest = item.requestKey
+            writingInitialized = method == "notifications/initialized"
             outbound.append(item.data); outbound.append(10)
         }
         func backendFrame(_ frame: Data) throws {
@@ -182,6 +191,7 @@ public enum RecoveringStdioBridge {
                     try lost(); return
                 }
                 handshakeDeadline = nil
+                writingInitialized = true
                 try append(["jsonrpc": "2.0", "method": "notifications/initialized"], to: &outbound)
                 return
             }
@@ -240,6 +250,9 @@ public enum RecoveringStdioBridge {
                     do {
                         let written = try writeTo(socket, data: &outbound)
                         if written > 0, let writingRequest { pending[writingRequest]?.submitted = true }
+                        if outbound.isEmpty && writingInitialized {
+                            backendReady = true; writingInitialized = false
+                        }
                     } catch { try lost() }
                 }
                 if frontend.count < frameLimit { try prepareWrite() }

@@ -646,3 +646,12 @@ These tests do not restart the installed app, read real Messages or Contacts,
 send messages, or change permissions. The installed client must establish one
 fresh session to pick up an updated bridge binary; real app/client restart QA
 remains a separate integration check.
+
+The integrated automatic-routing/recovery build passed 156 XCTest and 44 Swift
+Testing cases, plus the final 17 bridge fault cases, three Swift SDK recovery
+checkpoints and the send MCP suite. Installed QA retained the same bridge process
+through a real menu-app restart: the active read-only watch was interrupted,
+a fresh read worked, and the old store cursor was rejected. One authorized
+synthetic self-text then sent successfully with no service argument, one recorded
+attempt and one outgoing source row; its incoming content was verified. No live
+write was deliberately interrupted and no contractor or group was messaged.

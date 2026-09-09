@@ -36,7 +36,7 @@ This is the register of unresolved requirements and design choices. It separates
 
 History/search retain ordinary and attachment-only rows as messages and separate reaction, preview and unknown rows as typed events. Missing classification columns mean unknown. Edited/retracted markers are orthogonal source state. No heuristic preview coalescing or original-text reconstruction occurs. The exact response is in [schemas](schemas.md).
 
-Activity counting remains open: propose a shared logical normalizer counting ordinary and attachment-only user messages once, attaching only proven reactions, and explicitly deciding tombstone/system/unknown treatment. Physical page length is not the counting rule. Sending, counts and production image access remain required release work.
+Activity counting remains open: propose a shared logical normalizer counting ordinary and attachment-only user messages once, attaching only proven reactions, and explicitly deciding tombstone/system/unknown treatment. Physical page length is not the counting rule. Sending and counts remain required release work. Incoming image/file retrieval follows the [local attachment contract](schemas.md#incoming-attachment-retrieval); real client viewing and file consumption remain live validation gates.
 
 ## Search matching policy
 

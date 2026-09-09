@@ -4,7 +4,7 @@ Native Swift access to Apple Messages for agents, with readable conversation nam
 
 A native menu-bar app owns permissions and shared Swift operations; agents connect through a local stdio MCP bridge. A diagnostic CLI can use those same operations when needed. Intel macOS is the initial validation target.
 
-The first implementation slice provides conversation finding, reading, decoded-body search and durable local aliases. Sending, activity counts and image access remain required for the first release and are not registered as placeholder tools.
+The implementation provides conversation finding, reading, decoded-body search, durable local aliases and message-bound image/file retrieval. Sending and activity counts remain required for the first release and are not registered as placeholder tools.
 
 ## Intended experience
 

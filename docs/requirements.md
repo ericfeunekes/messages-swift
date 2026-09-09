@@ -46,6 +46,7 @@ These names describe the intended operation surface. Exact input and output sche
 | `send_message` | Exactly one destination selector: stable chat identity or resolved recipients; text, local files or both, within the approved release scope |
 | `count_message_activity` | Total/sent/received counts over a date range, overall or per chat, calendar buckets and ranking |
 | `read_image` | An image attachment identified by a message result, returned in a form the agent can view |
+| `read_attachment` | Complete bounded original file bytes identified by a message and its associated attachment; usable by the agent's existing document tools |
 | `set_chat_alias` | Set, replace or remove a local name for an exact conversation; a local metadata write, not a message send |
 
 ## History and search semantics
@@ -63,7 +64,7 @@ These names describe the intended operation surface. Exact input and output sche
 
 Counts and history share one definition of a message. Counts support half-open date ranges, sent/received splits, an explicit reported time zone, Monday week boundaries and empty intervals. Resolved bounds remain stable across continuation pages. Daily totals alone cannot answer partial-day ranges.
 
-Image access resolves an attachment belonging to a message result. It is not an arbitrary filesystem reader. Missing or undownloaded attachments remain distinguishable from absent attachments. No automatic cloud fetch is required. Outgoing files are shown in the preview and validated before sending.
+Image and file access resolve an attachment belonging to a message result. Neither is an arbitrary filesystem reader. Missing or undownloaded attachments remain distinguishable from absent attachments. File access preserves original bytes and type/name metadata; size limits fail explicitly without truncation. Image views report resizing and frame selection. No automatic cloud fetch is required. Outgoing files are shown in the preview and validated before sending.
 
 ## Scope boundaries
 

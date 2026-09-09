@@ -63,7 +63,7 @@ extension MessageStore {
     return .ordinary
   }
 
-  private func attachments(messageRowID: Int64, database: OpaquePointer, schema: MessageSchema, generation: String) throws -> [AttachmentMetadata] {
+  func attachments(messageRowID: Int64, database: OpaquePointer, schema: MessageSchema, generation: String) throws -> [AttachmentMetadata] {
     guard schema.hasAttachmentTables else { return [] }
     func column(_ name: String) -> String { schema.attachmentHas(name) ? "a.\(name)" : "NULL" }
     let statement = try SQLiteStatement(database, """

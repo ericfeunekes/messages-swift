@@ -12,7 +12,7 @@ flowchart TD
     Operations --> Directory[Conversation directory]
     Operations --> History[Message queries and decoding]
     Operations --> Send[Messages send integration]
-    Operations --> Images[Native image reader]
+    Operations --> Images[Message-bound attachment reader]
     Directory --> Contacts[Selected macOS Contacts container]
     Directory --> State[Contact cache and saved aliases]
     Directory --> DB[Messages database: read only]
@@ -51,9 +51,20 @@ The following differences require implementation work rather than a cosmetic ada
 - Its history participant filter matches senders, not a conversation's participant set.
 - Its daily statistics do not supply arbitrary partial-day range counts or the full ranked calendar-bucket contract.
 - Enriched name resolution, saved aliases and the bounded frequent-contact cache are this project's operation layer.
-- Attachment paths and metadata still need MCP image presentation and clear multiple-file send outcomes.
+- Multiple-file sends require clear partial outcomes; incoming image/file presentation is owned by the attachment reader and MCP adapter.
 
 The preparatory build and query probe support a narrow maintained adaptation of the public read/query/decoding code: required connection and decoder seams are internal, so an external wrapper cannot supply the complete contract unchanged. Keep the adaptation small and omit unneeded CLI/private-helper code. Do not fetch complete history through a public API merely to emulate missing filters or continuation. Preserve applicable upstream license notices and test expectations.
+
+## Incoming attachments
+
+The attachment reader resolves IDs through the SQLite message/attachment join,
+then opens the source with descriptor-relative, no-symlink path traversal. It
+checks and reads the same regular-file descriptor with explicit byte limits.
+ImageIO decodes and renders a bounded first-frame PNG; original file retrieval
+preserves complete bytes. The operation actor owns retrieval, and the MCP adapter
+adds image or embedded-resource content alongside structured metadata. No file
+content enters contact/alias state or a durable generic cache. Exact limits,
+metadata and failures are defined in [schemas](schemas.md#incoming-attachment-retrieval).
 
 ## Approval ownership
 

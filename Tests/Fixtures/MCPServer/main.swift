@@ -50,4 +50,15 @@ let operations = MessagesOperations(
   binding: ContactsContainerBinding(containerID: "synthetic-selected-container"),
   state: try LocalState(directory: fixture.stateDirectory)
 )
-try await MCPServerRunner.run(operations: operations)
+if let index = CommandLine.arguments.firstIndex(of: "--socket"), index + 1 < CommandLine.arguments.count {
+  let server = UnixSocketServer(url: URL(fileURLWithPath: CommandLine.arguments[index + 1]))
+  try server.start(operations: operations)
+  FileHandle.standardOutput.write(Data("ready\n".utf8))
+  Task.detached {
+    _ = FileHandle.standardInput.readDataToEndOfFile()
+    server.stop()
+  }
+  try await server.waitUntilStopped()
+} else {
+  try await MCPServerRunner.run(operations: operations)
+}

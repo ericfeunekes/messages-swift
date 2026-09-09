@@ -14,6 +14,8 @@ exclusive. Limits default to 50 and range from 1 through 100.
 | `read_messages` | Required `chatID`; `dateRange`, `unreadOnly`, `limit`, optional `cursor` |
 | `search_messages` | Required nonempty `query`; optional `chatID`; `participants`, `membership`, `dateRange`, `unreadOnly`, `limit`, optional `cursor` |
 | `set_chat_alias` | Required `chatID` and `alias`; string sets/replaces this chat's alias, null removes it |
+| `read_image` | Required nonempty `messageID` and `attachmentID` from history/search; no path or rendering options |
+| `read_attachment` | Required nonempty `messageID` and `attachmentID` from history/search; no path |
 
 `chatID` is the source `chat.guid`, never its row number or `chat_identifier`.
 `dateRange` contains optional `start` and `end`. `membership` is `contains_all` or
@@ -77,11 +79,54 @@ is separate from this candidate lookup.
 MCP returns structured JSON plus equivalent text. Invalid invocations use JSON-RPC
 invalid-params errors; expected operation failures use `isError: true` and an
 `error` object with a stable `code`; alias collisions also return conflicting `chatIDs`. Alias writes change only local metadata.
-Sending, activity counts and production image access have no registered handlers
-in this slice; their requirements remain part of the first release.
+Sending and activity counts remain separate first-release operations.
 
 Malformed cursor encodings return `invalid_cursor`; a valid cursor with changed
 filters, search mode, or owning connection returns `cursor_mismatch`. SQLite's
 opened-file moved signal returns `database_replaced`. A failed/unsupported
 opened-file check returns `database_check_failed`; it is never treated as an
 unchanged file. Both require a fresh server/store and new query.
+
+## Incoming attachment retrieval
+
+Both attachment tools resolve the exact message identity and its joined attachment
+identity in the current database. GUID-less identities returned by history remain
+valid only for that store connection. Neither tool accepts a filesystem path.
+History metadata remains unchanged; its availability is an observation at listing
+time, not a promise that retrieval will succeed later. No content is cached or
+downloaded from iCloud.
+
+`read_attachment` returns complete original bytes as one base64 MCP embedded
+resource, with an opaque message/attachment URI and the original filename in
+structured metadata. MIME selection uses source MIME, then source UTI, then name
+extension, then `application/octet-stream`; this labels bytes without parsing or
+converting documents. The original source MIME and UTI remain in attachment metadata;
+its filename is the display name, never the internal storage path.
+Files larger than 8 MiB are rejected, never truncated. Agents can pass the returned
+bytes to their existing PDF or document tools.
+
+`read_image` reads at most 32 MiB of source bytes through native ImageIO. It returns
+one PNG MCP image: frame zero, orientation applied, at most 2,048 pixels on the
+longest edge, no upscaling, and at most 8 MiB of encoded output. The source must be
+an ImageIO-supported image (including HEIC when the OS supports it); PDFs are
+documents for `read_attachment`, not images for `read_image`. Sources above
+100 million pixels are rejected before pixel decoding. The structured result
+reports source MIME, source dimensions, frame count, selected frame zero, rendered
+dimensions, output MIME, original byte count and returned byte count. Both tools
+report `sourceByteLimit` and `returnedByteLimit`; image results also report
+`maxPixelDimension` and `maxSourcePixelCount`. The image view does not
+claim to preserve animation, all pages, metadata or the original encoding.
+
+Expected failures use `isError: true` with `error.code`: `attachment_not_found`
+(message or associated attachment absent), `attachment_unavailable` (missing path,
+undownloaded, unreadable or failed read), `attachment_unsafe_file` (symlink,
+nonregular file or invalid source path), `attachment_too_large`,
+`unsupported_image`, or `invalid_image`. No failure exposes file paths. Opened
+files must be regular local files; path traversal through symlinks is rejected,
+and bounded reads use the same descriptor checked by `fstat`.
+
+Owning proof uses synthetic SQLite message/attachment associations, actual files,
+native image encode/decode fixtures, and an independent MCP client that checks
+returned bytes and MIME. Cases cover association mismatch, connection-scoped IDs,
+missing files, symlinks and nonregular files, unsupported and malformed images,
+image resizing/frame selection, file MIME handling and exact size boundaries.

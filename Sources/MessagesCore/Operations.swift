@@ -36,6 +36,14 @@ public actor MessagesOperations {
         return SetChatAliasResult(chatID: input.chatID, alias: state.alias(for: input.chatID))
     }
 
+    public func readAttachment(_ input: ReadAttachmentInput) throws -> AttachmentContent {
+        try store.readAttachment(input)
+    }
+
+    public func readImage(_ input: ReadAttachmentInput) throws -> AttachmentContent {
+        try store.readAttachment(input, image: true)
+    }
+
     public func findChats(_ input: FindChatsInput, now: Date = Date()) throws -> FindChatsResult {
         try validate(limit: input.limit, dates: input.dateRange)
         let people = try preparedPeople(now: now)

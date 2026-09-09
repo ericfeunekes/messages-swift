@@ -8,7 +8,7 @@ public enum MCPServerRunner {
     }
 
     public static func run(operations: MessagesOperations, transport: any Transport) async throws {
-        let server = Server(name: "messages-swift", version: "0.1.0", instructions: "Read and search local Messages with selected Contacts names. Ambiguous contacts require a choice. This slice exposes local aliases but no send, count or image operation. Decoding diagnostics mean search coverage is incomplete. Never interpret a cached label as a send destination.", capabilities: .init(tools: .init()))
+        let server = Server(name: "messages-swift", version: "0.1.0", instructions: "Read and search local Messages with selected Contacts names, local aliases and message-bound images/files. Ambiguous contacts require a choice. Decoding diagnostics mean search coverage is incomplete. Attachment tools return bounded image views or complete original file bytes; errors do not deliver a file. Never interpret a cached label as a send destination.", capabilities: .init(tools: .init()))
         let tools = ToolSchemas.tools
         await server.withMethodHandler(ListTools.self) { _ in .init(tools: tools) }
         await server.withMethodHandler(CallTool.self) { params in
@@ -18,7 +18,7 @@ public enum MCPServerRunner {
             let arguments = Value.object(params.arguments ?? [:])
             try ToolSchemas.validate(arguments, against: tool.inputSchema)
             var fields = params.arguments ?? [:]
-            if params.name != "set_chat_alias" {
+            if ["find_chats", "read_messages", "search_messages"].contains(params.name) {
                 fields["dateRange"] = fields["dateRange"] ?? .object([:])
                 fields["unreadOnly"] = fields["unreadOnly"] ?? false
                 fields["limit"] = fields["limit"] ?? 50
@@ -42,6 +42,10 @@ public enum MCPServerRunner {
             }
             do {
                 switch params.name {
+                case "read_image":
+                    return try encodeAttachment(await operations.readImage(decoder.decode(ReadAttachmentInput.self, from: data)), image: true)
+                case "read_attachment":
+                    return try encodeAttachment(await operations.readAttachment(decoder.decode(ReadAttachmentInput.self, from: data)), image: false)
                 case "find_chats":
                     return try encode(await operations.findChats(decoder.decode(FindChatsInput.self, from: data)))
                 case "read_messages":
@@ -71,6 +75,23 @@ public enum MCPServerRunner {
         await transport.disconnect()
     }
 
+    private static func encodeAttachment(_ attachment: AttachmentContent, image: Bool) throws -> CallTool.Result {
+        let metadata = try encode(attachment.info)
+        let payload: Tool.Content
+        if image {
+            payload = .image(data: attachment.data.base64EncodedString(), mimeType: attachment.mimeType, annotations: nil, _meta: nil)
+        } else {
+            // The URI names the embedded bytes; it is not a filesystem path or a
+            // second resource-reading authority. IDs are separate URI segments.
+            let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+            let message = attachment.info.messageID.addingPercentEncoding(withAllowedCharacters: allowed)!
+            let attachmentID = attachment.info.attachmentID.addingPercentEncoding(withAllowedCharacters: allowed)!
+            let uri = "messages-attachment:///\(message)/\(attachmentID)"
+            payload = .resource(resource: .binary(attachment.data, uri: uri, mimeType: attachment.mimeType))
+        }
+        return try .init(content: metadata.content + [payload], structuredContent: metadata.structuredContent, isError: false)
+    }
+
     private static func encode<T: Encodable>(_ object: T, isError: Bool = false) throws -> CallTool.Result {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -82,6 +103,7 @@ public enum MCPServerRunner {
 
     private static func domainCode(_ error: Error) -> String {
         // Each domain owns its errors; never emit raw errors containing paths or private values.
+        if let error = error as? AttachmentReadError { return error.rawValue }
         if let error = error as? ContactsDirectoryError {
             switch error {
             case .permissionNotGranted: return "contacts_permission_not_granted"

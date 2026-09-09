@@ -69,6 +69,47 @@ Use a clearly chosen small conversation scope for a read, a Contacts lookup and 
 
 New-group creation needs its own public-API proof if included in the release. Existing group sends and single new-recipient sends do not prove it. Do not enable injected/private operations to make the test pass.
 
+### Incoming attachment checks
+
+The attachment boundary suite uses real synthetic SQLite associations and local
+files. The independent Python client decodes the ImageIO output with Pillow and
+compares original file bytes. It exercises both direct MCP stdio and the same
+Unix-socket server/stdio relay used by the app, with a synthetic operations owner.
+It never connects to the installed app. Run after `swift test`:
+
+```sh
+swift build --product MCPTestServer
+swift build --product MCPBridgeTestClient
+uv pip install --python .scratch/protocol-venv/bin/python 'mcp==1.26.0' 'pillow==11.3.0'
+PYTHONDONTWRITEBYTECODE=1 .scratch/protocol-venv/bin/python Tests/Protocol/attachment_test.py
+```
+
+The synthetic [attachment fixtures](../Tests/Fixtures/Attachments) retain a red
+PNG, an oriented JPEG, a small PDF and an unknown binary document for client
+checks. The protocol script copies these and generates a two-frame GIF, a larger
+PNG and files at/above the original-byte size limit. Working fixtures and state
+remain under ignored `.scratch/attachment-protocol/`.
+These tests prove server payloads, not Codex's ability to display or consume them.
+
+After root integrates and installs the combined release under the saved signing
+identity, root owns this read-only live check:
+
+1. In an explicitly chosen small conversation, obtain one genuine image and one
+   non-image attachment's IDs from history. Record only aggregate outcomes.
+2. Call `read_image` through the installed MCP bridge. Confirm that Codex visibly
+   receives the image and that the reported orientation, dimensions, frame choice
+   and limits agree with the view. Do not claim original-image fidelity.
+3. Call `read_attachment` for a genuine small PDF/document. Confirm that Codex's
+   document capability can consume the returned embedded bytes and identify a
+   private content detail correctly, without logging the detail. An accepted
+   resource block alone does not prove delivery to that capability.
+4. If an undownloaded attachment is available in the chosen scope, confirm the
+   explicit unavailable result without downloading it. Keep any unavailable
+   genuine fixture case recorded as untested rather than substituting a claim.
+
+Real attachment paths, private content, macOS 14, Apple Silicon and client
+rendering/consumption remain live gates until those checks are performed.
+
 ## Completion reporting
 
 Record what was run, the authoritative outcome, and any untested boundaries. Source review, available schemas and a successful launch are not substitutes for the behavior being claimed. Do not add production receipt tables or repeated readbacks to compensate for missing tests.
@@ -123,8 +164,9 @@ Integrated production latency and live WAL contention remain unmeasured.
 
 The response preserves source row kinds and independent edited/retracted state;
 activity normalization remains an explicit decision in [decisions](decisions.md).
-Sending (direct and existing group, text/files with partial/uncertain outcomes),
-activity buckets/counts and message-bound image access remain first-release work.
+Sending (direct and existing group, text/files with partial/uncertain outcomes)
+and activity buckets/counts remain first-release work. Incoming attachment payload
+proof and live client gates are defined in [incoming attachment checks](#incoming-attachment-checks).
 No placeholder operation claims success for those capabilities.
 
 ### Initial implementation result: September 8, 2026, commit 582be93

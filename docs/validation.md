@@ -710,3 +710,19 @@ than 24 hours old. This proves the observed persisted binding and FIFO metadata,
 not native Contacts candidate completeness. Selected-container filtering, refresh
 without readmission and eviction behavior retain their real-fixture tests. No
 contacts, grants or cache files were changed for this check.
+
+### Accessibility setup integration
+
+The menu app now reports Accessibility trust without prompting and requests it
+only through explicit permission setup. Tests cover request sequencing, one
+request followed by settings guidance, grant detection on activation, removal of
+stale guidance, and settings layout. The actual socket-backed read runtime still
+starts without send permission or Accessibility trust. No organization action
+or tool is exposed by this setup change.
+
+The integrated build passed 158 XCTest and 47 Swift Testing tests from the short
+repository path, including the runtime tests. The signed app was installed and
+reopened; the existing native Codex client then read successfully with zero
+decoding failures. Full logs are under `.scratch/organization-permission-integration/`.
+Actual Accessibility grant and native organization behavior remain live gates:
+the desktop was at the macOS login window during this check.

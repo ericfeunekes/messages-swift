@@ -169,8 +169,28 @@ codex mcp add messages-swift -- "$HOME/Applications/Messages Swift.app/Contents/
 ```
 
 A new client session is required to verify discovery. Registration alone does not
-prove a live read. All nine registered tools use the shared operations; live
+prove a live read. All ten registered tools use the shared operations; live
 validation gates are recorded in [validation](validation.md).
+
+### Connection recovery after an app restart
+
+The bridge makes one socket connection. When the app closes that connection, the
+bridge drains received output and exits; it does not reconnect or replay requests.
+Reopening the app therefore does not revive a client transport that already ended.
+
+If an existing client reports `Transport closed`, check the app's status, then
+create a fresh stdio MCP session using the installed `messages-mcp` executable.
+Initialize that session and rediscover its tools before calling an operation. A
+successful read through the fresh session distinguishes a stale client connection
+from an unavailable app. The fresh session can use the same native backend while
+the surrounding task continues; raw SQL and AppleScript substitutes are not
+needed. Re-registering configuration alone is not a verified reconnect procedure.
+
+An interrupted send remains uncertain until its source state is inspected. Never
+replay it merely because a new session connected. An app restart also invalidates
+store-bound cursors: start a new bounded read rather than reusing them. A resumed
+watch starts from its new baseline and does not claim coverage of the disconnected
+interval; inspect that interval with a bounded history read when needed.
 
 `contacts.json` is version 1 with `containerID`, `isSeeded` and FIFO `entries`;
 each entry carries `person` (source identity, display name, handles), `admittedAt`

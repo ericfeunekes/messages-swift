@@ -49,7 +49,8 @@ it does not prove arbitrary targets, draft preservation or unread-state behavior
 A secondary-instance probe returned a distinct Messages PID but could not obtain
 a usable AX window. A later unsandboxed session check found the macOS login window
 frontmost, so that run cannot establish that secondary automation is unsupported.
-Live organization testing requires an interactive desktop and a verified target.
+The owner subsequently abandoned graphical automation because this Mac is usually
+locked; these experiments are historical evidence, not remaining delivery work.
 
 ## Platform and protocol
 

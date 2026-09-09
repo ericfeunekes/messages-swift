@@ -48,8 +48,3 @@ import Testing
     #expect(AutomationSetupAccess.classify(status: OSStatus(errAEEventNotPermitted)) == .denied)
     #expect(AutomationSetupAccess.classify(status: -1) == .unavailable)
 }
-
-@Test func accessibilityPermissionStatusUsesPublicTrustStates() {
-    #expect(AccessibilitySetupAccess.denied.action == .request)
-    #expect(AccessibilitySetupAccess.granted.action == .none)
-}

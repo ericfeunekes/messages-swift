@@ -76,8 +76,6 @@ private actor RuntimeStatusSignal {
         var readAccess: (String) -> MessagesReadAccess = { MessagesReadAccess.check(path: $0) }
         var automationAccess: @MainActor () async -> AutomationSetupAccess = { await AutomationSetupAccess.check() }
         var requestAutomation: @MainActor () async -> AutomationSetupAccess = { await AutomationSetupAccess.request() }
-        var accessibilityAccess: () -> AccessibilitySetupAccess = { AccessibilitySetupAccess.check() }
-        var requestAccessibility: () -> AccessibilitySetupAccess = { AccessibilitySetupAccess.request() }
         var makeDirectory: @Sendable () -> any ContactsDirectorySource = { MacContactsDirectory() }
         var openURL: (URL) -> Void = { NSWorkspace.shared.open($0) }
         var revealApp: (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
@@ -111,18 +109,13 @@ private actor RuntimeStatusSignal {
     private var contactsStatusLabel: NSTextField?
     private var messagesStatusLabel: NSTextField?
     private var automationStatusLabel: NSTextField?
-    private var accessibilityStatusLabel: NSTextField?
     private(set) var messagesAccess: MessagesReadAccess = .unavailable
     private(set) var automationAccess: AutomationSetupAccess = .unavailable
-    private(set) var accessibilityAccess: AccessibilitySetupAccess = .denied
     private var setupMessage = ""
     private var automationMessage = ""
-    private var accessibilityMessage = ""
     private var sourceMessage = ""
     private(set) var requestingContacts = false
     private(set) var requestingAutomation = false
-    private(set) var requestingAccessibility = false
-    private var requestedAccessibility = false
     private(set) var checkingAutomation = false
     private var automationRevision = 0
     private var presentsSetupAfterAutomationCheck = false
@@ -152,13 +145,6 @@ private actor RuntimeStatusSignal {
         case .denied: "denied — enable Automation for Messages"
         case .granted: "granted"
         case .unavailable: "could not be checked; open Messages, then Check Again"
-        }
-    }
-
-    private var accessibilityDescription: String {
-        switch accessibilityAccess {
-        case .denied: "not granted — enable Accessibility for Messages Swift"
-        case .granted: "granted"
         }
     }
 
@@ -207,7 +193,6 @@ private actor RuntimeStatusSignal {
         menu.addItem(NSMenuItem(title: "Contacts: \(contactsDescription(authorization))", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Messages: \(messagesDescription)", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Automation: \(automationDescription)", action: nil, keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Accessibility: \(accessibilityDescription)", action: nil, keyEquivalent: ""))
         menu.addItem(item(title: "Set Up Permissions…", action: #selector(setUpPermissions)))
         menu.addItem(.separator())
         menu.addItem(item(title: "Settings…", action: #selector(showSettings)))
@@ -223,9 +208,7 @@ private actor RuntimeStatusSignal {
 
     @objc func setUpPermissions() {
         showSettings()
-        guard !setUpContactsIfNeeded(), contactsAccess.action == .none else { return }
-        guard !setUpAutomationIfNeeded(), automationAccess.action == .none else { return }
-        setUpAccessibilityIfNeeded()
+        if !setUpContactsIfNeeded(), contactsAccess.action == .none { setUpAutomationIfNeeded() }
     }
 
     /// Returns true while the explicit Contacts request is pending. Automation is
@@ -248,8 +231,7 @@ private actor RuntimeStatusSignal {
                 self.requestingContacts = false
                 self.refreshSetupState()
                 self.guideMessagesAccess()
-                guard self.contactsAccess.action == .none else { return }
-                if !self.setUpAutomationIfNeeded(), self.automationAccess.action == .none { self.setUpAccessibilityIfNeeded() }
+                if self.contactsAccess.action == .none { self.setUpAutomationIfNeeded() }
             }
             return true
         case .settings:
@@ -266,10 +248,8 @@ private actor RuntimeStatusSignal {
         return false
     }
 
-    /// Returns true while an explicit Automation request is pending. Accessibility
-    /// setup begins only after that request completes, so macOS prompts do not race.
-    private func setUpAutomationIfNeeded() -> Bool {
-        guard !requestingAutomation else { return true }
+    private func setUpAutomationIfNeeded() {
+        guard !requestingAutomation else { return }
         switch automationAccess.action {
         case .request:
             requestingAutomation = true
@@ -289,13 +269,11 @@ private actor RuntimeStatusSignal {
                 }
                 self.refreshMenu()
                 self.populateSettings()
-                if self.automationAccess.action == .none { self.setUpAccessibilityIfNeeded() }
                 if self.presentsSetupAfterAutomationCheck {
                     self.presentsSetupAfterAutomationCheck = false
-                    if self.automationAccess != .granted { self.presentSettings(refreshing: false) }
+                    if self.automationAccess != .granted { self.showSettings() }
                 }
             }
-            return true
         case .settings:
             automationMessage = "Enable Messages Swift in Privacy & Security → Automation, then click Check Again."
             openAutomationSettings()
@@ -304,36 +282,6 @@ private actor RuntimeStatusSignal {
             automationMessage = "Automation permission could not be checked. Open Messages, then click Check Again."
             populateSettings()
         case .none:
-            break
-        }
-        return false
-    }
-
-    private func setUpAccessibilityIfNeeded() {
-        guard !requestingAccessibility else { return }
-        if accessibilityAccess == .denied, requestedAccessibility {
-            accessibilityMessage = "Enable Messages Swift in Privacy & Security → Accessibility, then click Check Again."
-            openAccessibilitySettings()
-            populateSettings()
-            return
-        }
-        switch accessibilityAccess.action {
-        case .request:
-            requestingAccessibility = true
-            requestedAccessibility = true
-            accessibilityMessage = "Respond to the macOS Accessibility request."
-            populateSettings()
-            accessibilityAccess = services.requestAccessibility()
-            requestingAccessibility = false
-            if accessibilityAccess == .granted {
-                accessibilityMessage = ""
-            } else {
-                accessibilityMessage = "Enable Messages Swift in Privacy & Security → Accessibility, then click Check Again."
-            }
-            refreshMenu()
-            populateSettings()
-        case .none:
-            requestedAccessibility = false
             break
         }
     }
@@ -350,7 +298,6 @@ private actor RuntimeStatusSignal {
     @objc func checkAgain() {
         setupMessage = ""
         automationMessage = ""
-        accessibilityMessage = ""
         refreshSetupState()
         populateSettings()
     }
@@ -363,75 +310,61 @@ private actor RuntimeStatusSignal {
         services.openURL(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!)
     }
 
-    @objc private func openAccessibilitySettings() {
-        services.openURL(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-    }
-
-    @objc func showSettings() { presentSettings(refreshing: true) }
-
-    private func presentSettings(refreshing: Bool) {
-        if refreshing { refreshSetupState() }
+    @objc func showSettings() {
+        refreshSetupState()
         if let settingsWindow {
             populateSettings()
             services.presentWindow(settingsWindow)
             return
         }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 520), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 480), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Messages Swift Settings"
         window.isReleasedWhenClosed = false
         window.delegate = self
         let content = NSView(frame: window.contentView!.bounds)
         content.autoresizingMask = [.width, .height]
         let contactsLabel = label("")
-        contactsLabel.frame = NSRect(x: 20, y: 467, width: 370, height: 24)
+        contactsLabel.frame = NSRect(x: 20, y: 427, width: 370, height: 24)
         contactsStatusLabel = contactsLabel
         content.addSubview(contactsLabel)
         let contactsButton = NSButton(title: "Contacts Settings…", target: self, action: #selector(openContactsSettings))
-        contactsButton.frame = NSRect(x: 390, y: 465, width: 170, height: 28)
+        contactsButton.frame = NSRect(x: 390, y: 425, width: 170, height: 28)
         content.addSubview(contactsButton)
         let messagesLabel = label("")
-        messagesLabel.frame = NSRect(x: 20, y: 407, width: 365, height: 48)
+        messagesLabel.frame = NSRect(x: 20, y: 367, width: 365, height: 48)
         messagesLabel.maximumNumberOfLines = 2
         messagesStatusLabel = messagesLabel
         content.addSubview(messagesLabel)
         let messagesButton = NSButton(title: "Full Disk Access…", target: self, action: #selector(openFullDiskAccessSettings))
-        messagesButton.frame = NSRect(x: 390, y: 415, width: 170, height: 28)
+        messagesButton.frame = NSRect(x: 390, y: 375, width: 170, height: 28)
         content.addSubview(messagesButton)
         let automationLabel = label("")
-        automationLabel.frame = NSRect(x: 20, y: 357, width: 365, height: 40)
+        automationLabel.frame = NSRect(x: 20, y: 317, width: 365, height: 40)
         automationLabel.maximumNumberOfLines = 2
         automationStatusLabel = automationLabel
         content.addSubview(automationLabel)
         let automationButton = NSButton(title: "Automation Settings…", target: self, action: #selector(openAutomationSettings))
-        automationButton.frame = NSRect(x: 390, y: 365, width: 170, height: 28)
+        automationButton.frame = NSRect(x: 390, y: 325, width: 170, height: 28)
         content.addSubview(automationButton)
-        let accessibilityLabel = label("")
-        accessibilityLabel.frame = NSRect(x: 20, y: 307, width: 365, height: 40)
-        accessibilityLabel.maximumNumberOfLines = 2
-        accessibilityStatusLabel = accessibilityLabel
-        content.addSubview(accessibilityLabel)
-        let accessibilityButton = NSButton(title: "Accessibility Settings…", target: self, action: #selector(openAccessibilitySettings))
-        accessibilityButton.frame = NSRect(x: 390, y: 315, width: 170, height: 28)
-        content.addSubview(accessibilityButton)
         let setup = NSButton(title: "Set Up Permissions", target: self, action: #selector(setUpPermissions))
-        setup.frame = NSRect(x: 20, y: 265, width: 170, height: 28)
+        setup.frame = NSRect(x: 20, y: 275, width: 170, height: 28)
         content.addSubview(setup)
         let check = NSButton(title: "Check Again", target: self, action: #selector(checkAgain))
-        check.frame = NSRect(x: 200, y: 265, width: 120, height: 28)
+        check.frame = NSRect(x: 200, y: 275, width: 120, height: 28)
         content.addSubview(check)
         let explanation = label("Choose the account whose contacts you want to use. Its contacts must already be synchronized with this Mac.")
-        explanation.frame = NSRect(x: 20, y: 200, width: 540, height: 44)
+        explanation.frame = NSRect(x: 20, y: 210, width: 540, height: 44)
         explanation.lineBreakMode = .byWordWrapping
         explanation.maximumNumberOfLines = 3
         content.addSubview(explanation)
-        let picker = NSPopUpButton(frame: NSRect(x: 20, y: 160, width: 540, height: 28), pullsDown: false)
+        let picker = NSPopUpButton(frame: NSRect(x: 20, y: 170, width: 540, height: 28), pullsDown: false)
         picker.target = self
         picker.action = #selector(sourceSelectionChanged)
         sourcePicker = picker
         content.addSubview(picker)
         let message = label("")
-        message.frame = NSRect(x: 20, y: 48, width: 540, height: 102)
-        message.maximumNumberOfLines = 5
+        message.frame = NSRect(x: 20, y: 48, width: 540, height: 112)
+        message.maximumNumberOfLines = 6
         message.lineBreakMode = .byWordWrapping
         message.textColor = .secondaryLabelColor
         settingsMessage = message
@@ -488,11 +421,6 @@ private actor RuntimeStatusSignal {
         let path = (try? RuntimeConfiguration.load(from: configurationPath).databasePath)
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Messages/chat.db").path
         messagesAccess = services.readAccess(path)
-        accessibilityAccess = services.accessibilityAccess()
-        if accessibilityAccess == .granted {
-            requestedAccessibility = false
-            accessibilityMessage = ""
-        }
         defer { updateSettingsStatus(); refreshAutomationAccess() }
         evaluateSetupState()
     }
@@ -526,7 +454,7 @@ private actor RuntimeStatusSignal {
             self.populateSettings()
             if self.presentsSetupAfterAutomationCheck {
                 self.presentsSetupAfterAutomationCheck = false
-                if self.automationAccess != .granted { self.presentSettings(refreshing: false) }
+                if self.automationAccess != .granted { self.showSettings() }
             }
         }
     }
@@ -557,8 +485,7 @@ private actor RuntimeStatusSignal {
         contactsStatusLabel?.stringValue = "Contacts: \(contactsDescription(services.authorization()))"
         messagesStatusLabel?.stringValue = "Messages: \(messagesDescription)"
         automationStatusLabel?.stringValue = "Automation: \(automationDescription)"
-        accessibilityStatusLabel?.stringValue = "Accessibility: \(accessibilityDescription)"
-        var messages = [setupMessage, automationMessage, accessibilityMessage, sourceMessage]
+        var messages = [setupMessage, automationMessage, sourceMessage]
         if contactsAccess.action != .none { messages.append("Contacts access is required to list sources.") }
         else if sources.isEmpty { messages.append("No Contacts sources are available.") }
         if status == .restartRequired || status == .failed { messages.append("Quit and reopen Messages Swift after correcting setup. The existing runtime cannot be restarted here.") }
@@ -628,7 +555,7 @@ private actor RuntimeStatusSignal {
 
 extension MessagesMenuApp: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
-        if notification.object as? NSWindow === settingsWindow { settingsWindow = nil; sourcePicker = nil; settingsMessage = nil; accessibilityStatusLabel = nil }
+        if notification.object as? NSWindow === settingsWindow { settingsWindow = nil; sourcePicker = nil; settingsMessage = nil }
     }
 
     private func label(_ string: String) -> NSTextField {

@@ -82,18 +82,11 @@ Image and file access resolve an attachment belonging to a message result. Neith
 
 ## Conversation organization
 
-Organization must work end to end through the agent. The user may request an
-operation and approve its concrete target, but must not have to navigate Messages,
-select a conversation or click native controls. Targeting, action and verification
-belong to the tool. Do not expose selected-chat-only controls as satisfying this
-requirement. Unsupported or ambiguous targets must produce an explicit failure,
-not a guessed action or a request for manual navigation.
-
-Organization includes existing conversations from unknown providers, including
-SMS short codes. A Contacts match or eligibility as a new outbound recipient is
-not a prerequisite for managing an existing conversation. Use its native source
-identity and verify the actual UI target. Do not substitute contact-name matching
-for identity or assume that a contact defines the native merged-chat scope.
+The owner abandoned graphical automation because this Mac is locked most of the
+time. Do not implement UI-driven pinning, muting, read-state changes or deletion,
+or require Accessibility permission for them. No supported non-graphical path for
+these native state changes has been established; they are outside the current
+delivery scope. Local aliases remain supported without changing Messages state.
 
 ## Scope boundaries
 

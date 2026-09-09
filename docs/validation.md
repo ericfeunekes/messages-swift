@@ -711,18 +711,21 @@ not native Contacts candidate completeness. Selected-container filtering, refres
 without readmission and eviction behavior retain their real-fixture tests. No
 contacts, grants or cache files were changed for this check.
 
-### Accessibility setup integration
+### Graphical automation disposition
 
-The menu app now reports Accessibility trust without prompting and requests it
-only through explicit permission setup. Tests cover request sequencing, one
-request followed by settings guidance, grant detection on activation, removal of
-stale guidance, and settings layout. The actual socket-backed read runtime still
-starts without send permission or Accessibility trust. No organization action
-or tool is exposed by this setup change.
+Accessibility setup was implemented and tested, then removed when the owner
+abandoned graphical automation because the Mac is usually locked. The temporary
+build passed 158 XCTest and 47 Swift Testing tests; its evidence remains in
+`.scratch/organization-permission-integration/`. No pin, mute, read-state or
+deletion tool was exposed, and no live organization mutation was performed.
 
-The integrated build passed 158 XCTest and 47 Swift Testing tests from the short
-repository path, including the runtime tests. The signed app was installed and
-reopened; the existing native Codex client then read successfully with zero
-decoding failures. Full logs are under `.scratch/organization-permission-integration/`.
-Actual Accessibility grant and native organization behavior remain live gates:
-the desktop was at the macOS login window during this check.
+The final unlocked secondary-instance probe selected the synthetic self chat
+while preserving the primary selection and empty composer counts. It did not
+prove nonempty draft preservation or organization actions. The owner abandoned
+this approach during the experiment; no further GUI experiment is required.
+
+The removal run passed 158 XCTest and 44 Swift Testing tests. The final retained
+permission sequencing and layout changes then passed all 35 runtime tests,
+including the socket-backed read path. The release build also passed. Full
+removal and runtime logs are retained locally in `.scratch/gui-removal/` for
+reproduction; obsolete graphical prototype binaries and their worktree were removed.

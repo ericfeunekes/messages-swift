@@ -19,23 +19,14 @@ This is the register of unresolved requirements and design choices. It separates
 - **Automatic transport:** the owner wants service selection hidden inside the
   MCP operation, including history-based routing and an SMS/RCS-first default for
   new phone numbers when the SMS relay is available. A bounded alternate eligible
-  route is permitted after a confirmed pre-dispatch non-send. The installed
-  explicit-service interface is not the desired normal user workflow. Uncertain
+  route is permitted after a confirmed pre-dispatch non-send. Explicit service
+  overrides remain optional diagnostics, not a required user step. Uncertain
   attempts and missing delivery receipts must not cause another send.
-- **Organization automation:** the owner requires end-to-end agent operation:
-  resolve the requested conversation, locate it without user navigation, perform
-  the approved action and verify the outcome. A selected-chat-only feature or a
-  workflow requiring the user to open, select or click conversations does not
-  meet the requirement. If reliable automatic targeting cannot be established
-  through the permitted interfaces, omit the organization capability rather than
-  shipping a manual workaround.
-- **Organization delivery:** implement one narrowly scoped operation at a time.
-  Establish native conversation targeting, build the action, exercise synthetic
-  boundary/failure tests, then validate the native action on an explicitly
-  disposable conversation. Pin and mute provide reversible first cases; read-state
-  changes and deletion require their own side-effect and recovery proof. Fixture
-  identity alone does not prove a Messages UI locator. The user's general feature
-  request is not permission to delete a real conversation during testing.
+- **Organization automation:** abandoned by the owner because the Mac is usually
+  locked. Remove Accessibility setup and do not ship graphical pin, mute,
+  read-state or deletion controls. Local aliases remain supported. Reconsider
+  native organization only if a permitted non-graphical implementation is found;
+  do not substitute private injection or database writes.
 - **Monitoring:** unattended monitoring and idle-task wakeups are removed from
   the requested work.
 

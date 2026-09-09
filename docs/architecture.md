@@ -123,15 +123,12 @@ macOS still requires the user's permission. Signing does not grant access.
 Launch the app normally through Finder or `open`; invoking its nested executable
 from Codex does not establish an independent permission identity on the tested Mac.
 
-Settings shows Contacts, Automation and Accessibility permission alongside Messages database readability.
+Settings shows Contacts and Automation permission alongside Messages database readability.
 The window opens on launch when required access or a source selection is missing.
 Choose Set Up Permissions to request Contacts access through the native async API,
-then Automation access through the public Apple Events permission API, then
-Accessibility trust through `AXIsProcessTrustedWithOptions`. Automation checks
-and requests that can block run off the main actor. Missing Automation
+then Automation access through the public Apple Events permission API. Permission
+checks and requests that can block run off the main actor. Missing Automation
 permission blocks sending, while the existing read runtime remains available.
-Accessibility status checks are read-only and do not expose an Accessibility
-action; its explicit request prepares the native organization boundary.
 Setup opens the appropriate System Settings pane for missing access. Full Disk
 Access requires a manual user grant: the app opens that pane and reveals itself
 in Finder so it can be added if absent. The file check reports readability,

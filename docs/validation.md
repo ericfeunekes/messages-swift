@@ -612,7 +612,11 @@ that no-dispatch guarantee part of the outcome contract.
 The updated MCP suite passed the new SMS-default SQLite/adapter assertion before
 failing a later attachment fixture assertion involving the existing ctime guard.
 This is not a fully passing protocol-suite result. File-guard behavior was not
-weakened. Complete focused logs are in `.scratch/default-transport-validation/`.
+weakened. A later instrumented run passed and observed ctime-only changes before
+submission, without identifying their writer. One subsequent unchanged control
+run passed all ten send MCP checks, including the attachment assertions; its log
+is `protocol-control.log`. This does not explain the earlier intermittent failure.
+Complete focused logs are in `.scratch/default-transport-validation/`.
 The signed SMS-default build was then installed and reopened. The existing native
 Codex client successfully read through the app restart, returning one message and
 zero decoding failures. No additional live send was required for this update.
@@ -696,3 +700,13 @@ workspace's ignored `.scratch/live-install/native-client-qa.md` and adjacent fil
 One reused subagent client returned `Transport closed`; the root native client
 succeeded. That particular client failure was not independently attributed to
 the known pre-installation stale-bridge limitation.
+
+### Installed directory cache spot check
+
+A September 9 read-only inspection found the configured selected container matched
+the persisted cache binding. The seeded cache held exactly 100 container-bound
+entries, with nondecreasing admission timestamps and all refresh timestamps less
+than 24 hours old. This proves the observed persisted binding and FIFO metadata,
+not native Contacts candidate completeness. Selected-container filtering, refresh
+without readmission and eviction behavior retain their real-fixture tests. No
+contacts, grants or cache files were changed for this check.

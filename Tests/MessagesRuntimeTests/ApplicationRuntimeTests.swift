@@ -470,3 +470,41 @@ extension ApplicationRuntimeTests {
         #expect(count == 0)
     }
 }
+
+extension ApplicationRuntimeTests {
+    @Test func disconnectedWatchReleasesItsOperationOwnerPromptly() async throws {
+        let fixture = try Fixture()
+        defer { try? fixture.remove() }
+        var pair: [Int32] = [0, 0]
+        #expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0)
+        let client = pair[1]
+        defer { close(client) }
+        var timeout = timeval(tv_sec: 3, tv_usec: 0)
+        _ = setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        let transport = UnixSocketTransport(fileDescriptor: pair[0])
+        weak var released: MessagesOperations?
+        let runner: Task<Void, Error>
+        do {
+            let owner = MessagesOperations(store: MessageStore(path: fixture.config.databasePath), directory: Directory(), binding: .init(containerID: "selected"), state: try fixture.state())
+            released = owner
+            runner = Task { try await MCPServerRunner.run(operations: owner, transport: transport) }
+        }
+        _ = try socketRequest(client, #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"synthetic","version":"1"}}}"#)
+        let frames = """
+        {"jsonrpc":"2.0","method":"notifications/initialized"}
+        {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"watch_messages","arguments":{"chatID":"fixture-chat","waitSeconds":20}}}
+
+        """
+        #expect(frames.withCString { write(client, $0, strlen($0)) } == frames.utf8.count)
+        try await Task.sleep(for: .milliseconds(150))
+        let read = try socketRequest(client, #"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read_messages","arguments":{"chatID":"fixture-chat"}}}"#)
+        #expect(read["id"] as? Int == 3)
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        shutdown(client, SHUT_RDWR)
+        try await runner.value
+        while released != nil && clock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(released == nil, "The disconnected watch retained operations after its session ended")
+        #expect(clock.now < deadline)
+    }
+}

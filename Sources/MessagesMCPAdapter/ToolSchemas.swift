@@ -17,6 +17,7 @@ enum ToolSchemas {
         "membership": ["type": "string", "enum": ["contains_all", "exact"]],
     ]
     static let tools: [Tool] = [
+        Tool(name: "watch_messages", description: "Wait for incoming new chat associations in one exact chat during this active call only. Default/max wait 20 seconds; zero establishes a cursor without waiting. Without cursor starts now. Resume exclusively with returned cursor; replay may duplicate data. Does not wake idle clients or detect all edits/deletions. Ordinary rows and events retain read semantics.", inputSchema: object(["chatID": string, "cursor": string, "waitSeconds": ["type": "integer", "minimum": 0, "maximum": 20], "limit": ["type": "integer", "minimum": 1, "maximum": 100]], required: ["chatID"]), annotations: .init(readOnlyHint: true, openWorldHint: false)),
         Tool(name: "read_image", description: "View a message-bound image attachment as PNG. Native decoding, first frame, orientation applied, longest edge at most 2048 pixels. Source limit 32 MiB and 100 million pixels; output limit 8 MiB. No cloud download. Use IDs from history/search.", inputSchema: object(["messageID": string, "attachmentID": string], required: ["messageID", "attachmentID"]), annotations: .init(readOnlyHint: true, openWorldHint: false)),
         Tool(name: "read_attachment", description: "Retrieve complete original bytes of a message-bound file as an embedded MCP resource, with name and MIME metadata. Maximum 8 MiB; larger files fail without truncation. No cloud download. Use IDs from history/search; paths are not accepted.", inputSchema: object(["messageID": string, "attachmentID": string], required: ["messageID", "attachmentID"]), annotations: .init(readOnlyHint: true, openWorldHint: false)),
         Tool(name: "send_message", description: "Send only after confirmation of an exact recipients/service/text/files preview, including when the initial request says send. Drafting never calls this tool. Exactly one destination: existing direct/group chatID (find aliases/names first), or one recipient with explicit service. Ambiguous names/handles return choices. Text then files in order, stops on rejection/unknown; never retry automatically. Accepted is not delivered.", inputSchema: object(["chatID": string, "recipients": ["type": "array", "items": participant], "service": ["type": "string", "enum": ["iMessage", "SMS", "RCS"]], "text": string, "files": ["type": "array", "items": string]]), annotations: .init(readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true)),
@@ -51,7 +52,8 @@ enum ToolSchemas {
             guard !text.isEmpty else { throw MCPError.invalidParams("Strings must not be empty") }
             if let allowed = definition["enum"]?.arrayValue, !allowed.contains(value) { throw MCPError.invalidParams("Invalid enum value") }
         case ("integer", .int(let number)):
-            guard (1...100).contains(number) else { throw MCPError.invalidParams("Limit must be between 1 and 100") }
+            guard let minimum = definition["minimum"]?.intValue, let maximum = definition["maximum"]?.intValue,
+                  (minimum...maximum).contains(number) else { throw MCPError.invalidParams("Integer is outside the permitted range") }
         case ("boolean", .bool): break
         default: throw MCPError.invalidParams("Argument has the wrong type")
         }

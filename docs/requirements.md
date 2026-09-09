@@ -41,6 +41,7 @@ These names describe the intended operation surface. Exact input and output sche
 | Operation | Required behavior |
 |---|---|
 | `find_chats` | Name/alias/contact resolution, participant membership, date and unread filtering, enriched results |
+| `watch_messages` | Bounded active-session wait for incoming new associations in one exact chat, with caller-owned exclusive continuation; no idle wakeups or background watcher |
 | `read_messages` | One exact chat; newest-first pages, date/unread filtering and attachment metadata |
 | `search_messages` | Case-insensitive body search, conversation membership and date filters, newest-first pages |
 | `send_message` | Exactly one destination selector: stable chat identity or resolved recipients; text, local files or both, within the approved release scope |

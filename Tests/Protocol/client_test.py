@@ -122,8 +122,8 @@ async def first_process(client, initialization):
         "read_image",
         "read_attachment",
         "send_message",
-
         "count_message_activity",
+        "watch_messages",
     }
     by_name = {tool.name: tool for tool in listed.tools}
     assert by_name["read_messages"].inputSchema["required"] == ["chatID"]

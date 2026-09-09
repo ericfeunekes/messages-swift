@@ -484,3 +484,57 @@ No installed-app actions, real Messages/Contacts reads, sends or permission
 changes were used. The read-only live activity reconciliation above remains the
 integration owner's next gate. Existing sending, file consumption and platform
 validation gates remain separate.
+
+## Active-session incoming watch
+
+`WatchTests` uses real synthetic SQLite/WAL and shared operations. It covers the
+initial baseline, exclusive bounded continuation, outgoing exclusion, typed
+events, late chat associations, backdated arrivals, replay, independent callers,
+monotonic timeout/cancellation, unknown chats, scope/store mismatch, opened-file
+replacement, changed/missing anchors, dangling associations, the 256-row physical
+scan bound, and directory/raw-status preservation.
+
+`disconnectedWatchReleasesItsOperationOwnerPromptly` initializes MCP on a real
+socket pair, starts a 20-second watch, completes a same-session read, disconnects,
+and checks that the operation owner releases within two seconds. This detects
+a wait retained after its session exits; a fresh client's success alone does not
+prove cleanup. `Tests/Protocol/watch_test.py` exercises the actual fixture socket
+and stdio relay with independent JSON-RPC clients, concurrent read/search,
+arrivals/replay, timeout, input validation, cancellation, disconnect and defaults.
+
+```sh
+swift test
+swift build --product MCPTestServer
+swift build --product MCPBridgeTestClient
+PYTHONDONTWRITEBYTECODE=1 python3 Tests/Protocol/watch_test.py
+```
+
+These tests use inert data under ignored `.scratch/`. They do not exercise a real
+incoming message, the installed app/client timeout, or provider association
+ordering on a live database. Root owns any authorized installation and live QA.
+Historical edits/deletions, lower-row insertions, identical anchor reuse and late
+attachment/status updates remain the explicit unobserved cases in the
+[watch schema](schemas.md#active-session-incoming-watch).
+
+The Intel synthetic run passed 110 XCTest tests and 44 Swift Testing tests,
+including 12 watch core tests and the socket lifetime check. The independent
+watch protocol script passed seven checkpoints. Replacing association ordering
+with message-row ordering failed the delayed-join test; removing session watch
+cleanup failed the operation-release check. Restored source passed. Sandboxed
+native-image/AppleScript/socket checks failed under restricted system access;
+the complete run above passed outside that sandbox without live sends or
+permission changes.
+
+### Combined watch integration result
+
+On September 9, 2026, the integrated nine-tool build passed 130 XCTest cases
+and 44 Swift Testing tests. Independent clients passed 15 read/alias, six inert
+send, 25 attachment, two raw provider-status, 13 activity and seven watch
+checks. The watch proof uses synthetic SQLite WAL, the actual fixture Unix
+socket server and the stdio relay. Session shutdown cancels only registered
+watch waits; send dispatch, partial/unknown outcomes and staged-file cleanup
+retain their existing ownership. Activity timestamp precision remains specific
+to activity results. Logs are local under `.scratch/watch-integration/`.
+No installation, live data, sending or permission changes were part of these
+checks. Installed-client timeout and a genuine incoming-message watch remain
+separate live gates for the integration owner.

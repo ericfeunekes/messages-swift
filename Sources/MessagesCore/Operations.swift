@@ -198,6 +198,37 @@ public actor MessagesOperations {
                                  decodingDiagnostics: diagnostics(page), decodingFailureCount: page.decodingFailureCount, scannedAssociationCount: page.scannedAssociationCount, unresolvedContactHandles: lookup.unresolvedHandles.sorted(), contactCandidates: contactCandidates(lookup), nextCursor: try encodeCursor(page.nextCursor))
     }
 
+    public func watchMessages(_ input: WatchMessagesInput) async throws -> WatchMessagesResult {
+        try validate(limit: input.limit, dates: DateRange())
+        guard (0...20).contains(input.waitSeconds) else { throw WatchError.invalidWait }
+        guard let chat = try store.chat(id: ChatID(rawValue: input.chatID)) else { throw OperationError.unknownChat(input.chatID) }
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(input.waitSeconds))
+        var cursor: WatchCursor? = try decodeCursor(input.cursor)
+        var records: [MessageRecord] = []
+        repeat {
+            try Task.checkCancellation()
+            let batch = try store.watchBatch(chatID: input.chatID, cursor: cursor, limit: input.limit)
+            cursor = batch.cursor
+            records = batch.records
+            if !records.isEmpty || clock.now >= deadline { break }
+            try await clock.sleep(until: min(deadline, clock.now.advanced(by: .milliseconds(100))))
+        } while true
+        try Task.checkCancellation()
+        let now = Date()
+        let handles = chat.participants + records.compactMap(\.sender)
+        let lookup = try peopleForRead(handles: handles, now: now)
+        try cacheUsed(lookup.people, handles: handles, identities: lookup.people.map(\.identity), now: now)
+        let failures = records.filter { $0.body.status == .failed }
+        let page = MessagePageResult(chat: enrich(chat, people: lookup.people, unresolvedHandles: lookup.unresolvedHandles),
+            messages: records.compactMap { message($0, people: lookup.people, unresolvedHandles: lookup.unresolvedHandles) },
+            events: records.compactMap { event($0, people: lookup.people, unresolvedHandles: lookup.unresolvedHandles) },
+            decodingDiagnostics: failures.prefix(10).map { DecodingDiagnostic(messageID: $0.id.rawValue, chatID: $0.chatID.rawValue, reason: "body decoding failed") },
+            decodingFailureCount: failures.count, scannedAssociationCount: records.count,
+            unresolvedContactHandles: lookup.unresolvedHandles.sorted(), contactCandidates: contactCandidates(lookup), nextCursor: nil)
+        return WatchMessagesResult(status: records.isEmpty ? "no_match" : "messages", cursor: try encodeCursor(cursor)!, page: page)
+    }
+
     public func searchMessages(_ input: SearchMessagesInput, now: Date = Date()) throws -> SearchMessagesResult {
         try validate(limit: input.limit, dates: input.dateRange)
         guard !input.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw OperationError.invalidQuery }

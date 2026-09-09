@@ -169,7 +169,7 @@ codex mcp add messages-swift -- "$HOME/Applications/Messages Swift.app/Contents/
 ```
 
 A new client session is required to verify discovery. Registration alone does not
-prove a live read. All eight registered tools use the shared operations; live
+prove a live read. All nine registered tools use the shared operations; live
 validation gates are recorded in [validation](validation.md).
 
 `contacts.json` is version 1 with `containerID`, `isSeeded` and FIFO `entries`;
@@ -251,3 +251,15 @@ Only accepted/uncertain file inputs outlive the invocation; unhanded files are
 removed. No TTL or sweep assumes Messages has finished reading after its reply.
 This is transfer-input ownership, not a receipt store or a delivery guarantee.
 Drafting and approval remain in the agent/client guidance.
+
+
+## Active-session watch
+
+The shared operation polls read-only association arrivals in bounded batches,
+suspending on a monotonic clock between snapshots. Waiting releases the operation
+actor so other reads and separate clients can proceed. The MCP adapter owns
+request cancellation and session cleanup. No timer survives its request.
+Association ROWID ordering preserves late chat joins independently of message
+ROWID and source date. Cursors carry one connection-bound anchor and no global
+acknowledgment state. The exact scope, limits and unobserved mutations are in
+[the watch schema](schemas.md#active-session-incoming-watch).

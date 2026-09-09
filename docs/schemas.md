@@ -231,7 +231,9 @@ closer than a microsecond to a source timestamp is not a lossless replacement fo
 the cursor. Continuation uses stored integer bounds, never reparsed display dates.
 
 Each row has optional `chatID`, exact clipped `start` and `end`, and `counts`
-(`total`, `sent`, `received`). Without buckets, each group has one row, including
+(`total`, `sent`, `received`). Sent/received are source direction counts from
+`isFromMe`, not delivery confirmations. Failed outgoing records can count;
+provider delivery fields remain separate. Without buckets, each group has one row, including
 an empty interval. Calendar buckets intersect the requested interval; partial
 first/last buckets retain the exact requested bounds. Gregorian days/months and
 Monday weeks use the reported time zone, including daylight-saving transitions.
@@ -265,3 +267,50 @@ failure does not erase a classified message from activity.
 
 A retraction that changes a continued aggregate returns
 `activity_changed_restart_required`; a fresh request excludes the retracted row.
+
+## Active-session incoming watch
+
+`watch_messages` accepts required exact `chatID`, optional opaque `cursor`,
+`waitSeconds` (integer 0–20, default 20), and `limit` (1–100, default 50).
+The wait budget uses a monotonic clock and stays below the 60-second MCP client
+request timeout with margin. Zero performs one bounded query and can establish
+an initial cursor. Without a cursor, the call starts after the current highest
+`chat_message_join.ROWID`; it does not return existing history. Establish a cursor
+with zero wait before a wait whose response might be lost.
+
+The result contains `status` (`messages` or `no_match`), a required `cursor`, and
+`page` with the existing enriched read result fields (without a history cursor).
+Incoming ordinary rows and typed events both qualify; outgoing rows do not.
+Each collection follows ascending association ROWID, independent of message
+dates; interleaving between messages and events is not encoded. The exclusive
+cursor advances over their combined arrival stream. At most
+`limit` associations are decoded/returned. Polls inspect at most 256 association
+rows and suspend between batches. `scannedAssociationCount` counts the consumed
+incoming associations in the selected chat; unrelated polling rows are not
+decoded. `no_match` means no matching association was
+consumed before this call's budget expired, not proof that no backlog exists.
+Continue with the returned cursor to inspect remaining arrivals.
+
+The cursor is caller-owned, exclusive, reusable and bound to this exact chat and
+MessageStore connection. No global acknowledged position exists. Replaying an
+input cursor can replay previously returned records; consumers deduplicate by
+message/chat identity. Use the returned cursor only after consuming the response.
+There is no durable cursor/snapshot/receipt store. Restart rejects old cursors.
+Database replacement uses the existing opened-file check. A cursor retains one
+association anchor (ROWID, message row, chat row, message GUID, chat GUID); a
+missing/changed anchor fails with `watch_position_invalidated`. Reorganization
+outside that anchor is not exhaustively detected. RowID reuse that recreates the
+same anchor, insertion at/below the consumed position, changes to older rows,
+edits, deletions, provider flags settling, and attachments arriving later are
+not observable guarantees. This is append/new-association watching, not a change
+log. It requires a rowid join table and referenced message/chat rows to exist when
+an association becomes visible. A dangling association fails explicitly with
+`watch_position_invalidated`; it is not silently consumed.
+
+Watching association insertion rather than message insertion preserves a message
+whose `chat_message_join` appears later, even after newer message rows were
+consumed. Polling has no notification-registration gap: every next query resumes
+from the last consumed association. No full-history body decoding occurs. Pending
+waits release the operation actor; cancellation/disconnect ends their work. This
+tool runs only for an active request. It does not wake idle clients, create user
+instructions, schedule automation, or keep a daemon running.

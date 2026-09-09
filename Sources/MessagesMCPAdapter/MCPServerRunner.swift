@@ -9,6 +9,7 @@ public enum MCPServerRunner {
 
     public static func run(operations: MessagesOperations, transport: any Transport) async throws {
         let server = Server(name: "messages-swift", version: "0.1.0", instructions: "Read, search and count local Messages with selected Contacts names, local aliases and message-bound images/files. Ambiguous contacts require a choice. Drafting never calls send_message. Before every send, even an initial request saying send, show the resolved recipients, service, exact text and files and obtain confirmation. An unchanged confirmed preview needs no second conversational confirmation; any change requires a revised preview. The client approves the invocation. Never retry an uncertain or partial send automatically. Accepted means accepted by Messages, not delivered. Attachment tools return bounded image views or complete original file bytes; errors do not deliver a file. Decoding diagnostics mean search coverage is incomplete. Never interpret a cached label as a send destination.", capabilities: .init(tools: .init()))
+        let watches = SessionWatches()
         let tools = ToolSchemas.tools
         await server.withMethodHandler(ListTools.self) { _ in .init(tools: tools) }
         await server.withMethodHandler(CallTool.self) { params in
@@ -26,6 +27,10 @@ public enum MCPServerRunner {
             if params.name == "find_chats" || params.name == "search_messages" || params.name == "count_message_activity" {
                 fields["participants"] = fields["participants"] ?? .array([])
                 fields["membership"] = fields["membership"] ?? "contains_all"
+            }
+            if params.name == "watch_messages" {
+                fields["waitSeconds"] = fields["waitSeconds"] ?? 20
+                fields["limit"] = fields["limit"] ?? 50
             }
             if params.name == "send_message" { fields["files"] = fields["files"] ?? .array([]) }
             if params.name == "count_message_activity" {
@@ -56,6 +61,9 @@ public enum MCPServerRunner {
             }
             do {
                 switch params.name {
+                case "watch_messages":
+                    let input = try decoder.decode(WatchMessagesInput.self, from: data)
+                    return try encode(await watches.run { try await operations.watchMessages(input) })
                 case "read_image":
                     return try encodeAttachment(await operations.readImage(decoder.decode(ReadAttachmentInput.self, from: data)), image: true)
                 case "read_attachment":
@@ -73,7 +81,8 @@ public enum MCPServerRunner {
                 default:
                     return try encode(await operations.setChatAlias(decoder.decode(SetChatAliasInput.self, from: data)))
                 }
-            } catch let error as MCPError { throw error }
+            } catch is CancellationError { throw CancellationError() }
+            catch let error as MCPError { throw error }
             catch is DecodingError { throw MCPError.invalidParams("Arguments do not match the typed operation schema") }
             catch {
                 let conflicts: [String]?
@@ -86,9 +95,11 @@ public enum MCPServerRunner {
             try await server.start(transport: transport)
             await server.waitUntilCompleted()
         } catch {
+            await watches.stop()
             await transport.disconnect()
             throw error
         }
+        await watches.stop()
         await server.stop()
         await transport.disconnect()
     }
@@ -132,6 +143,7 @@ public enum MCPServerRunner {
 
     private static func domainCode(_ error: Error) -> String {
         // Each domain owns its errors; never emit raw errors containing paths or private values.
+        if let error = error as? WatchError { return error.rawValue }
         if let error = error as? AttachmentReadError { return error.rawValue }
         if let error = error as? SendValidationError { return error.rawValue }
         if let error = error as? ActivityError {
@@ -182,4 +194,33 @@ public enum MCPServerRunner {
 private struct DomainFailure: Encodable {
     struct Detail: Encodable { let code: String; let chatIDs: [String]? }
     let error: Detail
+}
+
+
+/// SDK 0.12.1 cancels handlers on notifications, but stop() does not cancel
+/// inbound handlers. Retain only this session's waits to end them on EOF too.
+actor SessionWatches {
+    private var stopped = false
+    private var tasks: [UUID: Task<WatchMessagesResult, Error>] = [:]
+
+    func run(_ operation: @escaping @Sendable () async throws -> WatchMessagesResult) async throws -> WatchMessagesResult {
+        try Task.checkCancellation()
+        guard !stopped else { throw CancellationError() }
+        let id = UUID()
+        let task = Task { try await operation() }
+        tasks[id] = task
+        defer { tasks.removeValue(forKey: id) }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    func stop() async {
+        stopped = true
+        let pending = Array(tasks.values)
+        for task in pending { task.cancel() }
+        for task in pending { _ = try? await task.value }
+    }
 }

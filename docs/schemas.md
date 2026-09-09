@@ -159,7 +159,7 @@ delivery or capability guarantee.
 For `send_message`, omit `service` for automatic routing to the sole verified
 participant. The operation reuses available accounts and the newest successful
 route hint, mapping RCS history to SMS relay. Without a usable hint, phone
-numbers prefer available iMessage, then SMS; email requires iMessage.
+numbers prefer the available SMS relay, then iMessage; email requires iMessage.
 No enabled eligible service returns `messages_no_available_service` before
 submission. Explicit `service` remains a compatibility override and disables
 alternatives. Groups retain their exact chat route and forbid a service override. A
@@ -205,7 +205,7 @@ is `unknown`; it is never described as sent. Aggregate `failed` and `partial`
 are MCP tool errors, while an uncertain result is not retried.
 Concurrent batches return `send_in_progress` without dispatch; no automatic
 retry, duplicate send or new-group creation occurs. Automatic routing permits
-at most one iMessage-to-SMS alternative for a phone number, only on
+at most one alternate eligible service for a phone number, only on
 `messages_route_unavailable`: the shared AppleScript handler establishes that
 route lookup failed before dispatch began. It retries only that unsubmitted part
 with the identical payload and uses the alternative for remaining parts.
@@ -213,7 +213,7 @@ Successful and pending parts are never replayed. Permission/validation rejection
 unknown submission, absent/ambiguous status, pending rows and source errors never
 trigger an alternative. In particular, source error 22 has no established public
 terminal non-send contract; its reported failure does not authorize a duplicate.
-This is a limitation for new Android numbers whose iMessage submission is accepted
+This is a limitation for new Android numbers whose initial submission is accepted
 before failing in the source.
 
 All files must be readable regular files before the first command. Relative

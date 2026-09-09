@@ -17,8 +17,9 @@ This is the register of unresolved requirements and design choices. It separates
 ## Sending and organization decisions
 
 - **Automatic transport:** the owner wants service selection hidden inside the
-  MCP operation, including history-based routing and a bounded iMessage-to-SMS/RCS
-  alternative for new phone numbers after a confirmed non-send. The installed
+  MCP operation, including history-based routing and an SMS/RCS-first default for
+  new phone numbers when the SMS relay is available. A bounded alternate eligible
+  route is permitted after a confirmed pre-dispatch non-send. The installed
   explicit-service interface is not the desired normal user workflow. Uncertain
   attempts and missing delivery receipts must not cause another send.
 - **Organization automation:** the owner requires end-to-end agent operation:

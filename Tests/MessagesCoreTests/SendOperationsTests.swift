@@ -80,31 +80,37 @@ private final class StatusRecordingSender: MessagesSending, @unchecked Sendable 
 
     func send(target: SendTarget, payload: SendPayload) async -> SendDispatchOutcome {
         recorded.append((target, payload))
+        let observedService: String
+        switch target {
+        case .chat: observedService = "iMessage"
+        case .individual(_, "SMS"): observedService = "RCS"
+        case let .individual(_, service): observedService = service
+        }
         if case let .file(path) = payload {
             guard case let .sent(delivered) = mode else { return .accepted }
-            Self.insertFile(database: database, path: path, delivered: delivered, guid: nextGUID("file"))
+            Self.insertFile(database: database, path: path, delivered: delivered, guid: nextGUID("file"), service: observedService)
             return .accepted
         }
         guard case let .text(text) = payload else { return .accepted }
         switch mode {
         case .absent: return .accepted
-        case .failed(let error): Self.insert(database: database, text: text, sent: 0, delivered: 0, error: error, guid: nextGUID("failed"))
-        case .sent(let delivered): Self.insert(database: database, text: text, sent: 1, delivered: delivered ? 1 : 0, error: 0, guid: nextGUID("sent"))
+        case .failed(let error): Self.insert(database: database, text: text, sent: 0, delivered: 0, error: error, guid: nextGUID("failed"), service: observedService)
+        case .sent(let delivered): Self.insert(database: database, text: text, sent: 1, delivered: delivered ? 1 : 0, error: 0, guid: nextGUID("sent"), service: observedService)
         case .duplicate:
-            Self.insert(database: database, text: text, sent: 0, delivered: 0, error: 22, guid: nextGUID("one"))
-            Self.insert(database: database, text: text, sent: 1, delivered: 1, error: 0, guid: nextGUID("two"))
+            Self.insert(database: database, text: text, sent: 0, delivered: 0, error: 22, guid: nextGUID("one"), service: observedService)
+            Self.insert(database: database, text: text, sent: 1, delivered: 1, error: 0, guid: nextGUID("two"), service: observedService)
         case .delayedDuplicate:
             let firstGUID = nextGUID("first")
             let secondGUID = nextGUID("second")
-            Self.insert(database: database, text: text, sent: 1, delivered: 1, error: 0, guid: firstGUID)
+            Self.insert(database: database, text: text, sent: 1, delivered: 1, error: 0, guid: firstGUID, service: observedService)
             let database = database
             Task {
                 try? await Task.sleep(for: .milliseconds(150))
-                Self.insert(database: database, text: text, sent: 0, delivered: 0, error: 22, guid: secondGUID)
+                Self.insert(database: database, text: text, sent: 0, delivered: 0, error: 22, guid: secondGUID, service: observedService)
             }
         case .delayedSent:
             let guid = nextGUID("delayed")
-            Self.insert(database: database, text: text, sent: 0, delivered: 0, error: 0, guid: guid)
+            Self.insert(database: database, text: text, sent: 0, delivered: 0, error: 0, guid: guid, service: observedService)
             let database = database
             Task {
                 try? await Task.sleep(for: .milliseconds(150))
@@ -114,9 +120,9 @@ private final class StatusRecordingSender: MessagesSending, @unchecked Sendable 
                 XCTAssertEqual(sqlite3_exec(handle, "UPDATE message SET is_sent=1 WHERE guid='\(guid)'", nil, nil, nil), SQLITE_OK)
             }
         case .conflictingDelivery:
-            Self.insert(database: database, text: text, sent: 0, delivered: 1, error: 22, guid: nextGUID("conflict"))
+            Self.insert(database: database, text: text, sent: 0, delivered: 1, error: 22, guid: nextGUID("conflict"), service: observedService)
         case .groupOnlySent:
-            Self.insert(database: database, text: text, sent: 1, delivered: 1, error: 0, guid: nextGUID("group-only"), chatID: 2)
+            Self.insert(database: database, text: text, sent: 1, delivered: 1, error: 0, guid: nextGUID("group-only"), chatID: 2, service: observedService)
         }
         return .accepted
     }
@@ -128,7 +134,7 @@ private final class StatusRecordingSender: MessagesSending, @unchecked Sendable 
         return "status-\(kind)-\(sequence)"
     }
 
-    private static func insert(database url: URL, text: String, sent: Int, delivered: Int, error: Int, guid: String, chatID: Int = 1) {
+    private static func insert(database url: URL, text: String, sent: Int, delivered: Int, error: Int, guid: String, chatID: Int = 1, service: String) {
         var database: OpaquePointer?
         guard sqlite3_open(url.path, &database) == SQLITE_OK, let database else {
             XCTFail("Could not open status fixture database")
@@ -137,7 +143,7 @@ private final class StatusRecordingSender: MessagesSending, @unchecked Sendable 
         defer { sqlite3_close(database) }
         let escaped = text.replacingOccurrences(of: "'", with: "''")
         let statement = """
-        INSERT INTO message (guid,date,text,is_from_me,is_sent,is_delivered,error) VALUES ('\(guid)',999,'\(escaped)',1,\(sent),\(delivered),\(error));
+        INSERT INTO message (guid,date,text,is_from_me,is_sent,is_delivered,error,service) VALUES ('\(guid)',999,'\(escaped)',1,\(sent),\(delivered),\(error),'\(service)');
         INSERT INTO chat_message_join VALUES (\(chatID),last_insert_rowid());
         """
         let status = sqlite3_exec(database, statement, nil, nil, nil)
@@ -147,7 +153,7 @@ private final class StatusRecordingSender: MessagesSending, @unchecked Sendable 
         }
     }
 
-    private static func insertFile(database url: URL, path: String, delivered: Bool, guid: String) {
+    private static func insertFile(database url: URL, path: String, delivered: Bool, guid: String, service: String) {
         var database: OpaquePointer?
         guard sqlite3_open(url.path, &database) == SQLITE_OK, let database else {
             XCTFail("Could not open status fixture database")
@@ -156,7 +162,7 @@ private final class StatusRecordingSender: MessagesSending, @unchecked Sendable 
         defer { sqlite3_close(database) }
         let escapedPath = path.replacingOccurrences(of: "'", with: "''")
         let statement = """
-        INSERT INTO message (guid,date,text,is_from_me,is_sent,is_delivered,error) VALUES ('\(guid)',999,NULL,1,1,\(delivered ? 1 : 0),0);
+        INSERT INTO message (guid,date,text,is_from_me,is_sent,is_delivered,error,service) VALUES ('\(guid)',999,NULL,1,1,\(delivered ? 1 : 0),0,'\(service)');
         INSERT INTO chat_message_join VALUES (1,last_insert_rowid());
         INSERT INTO attachment (guid,filename,mime_type) VALUES ('\(guid)-attachment','\(escapedPath)','application/octet-stream');
         INSERT INTO message_attachment_join VALUES ((SELECT ROWID FROM message WHERE guid = '\(guid)'),last_insert_rowid());
@@ -908,12 +914,10 @@ extension SendOperationsTests {
 private actor AutomaticFixtureSender: MessagesSending, MessagesRouteDiscovering {
     let services: [String]
     let source: StatusRecordingSender
-    let databaseURL: URL
     let unavailableCalls: Set<Int>
     var calls: [(SendTarget, SendPayload)] = []
     init(database: URL, services: [String] = ["iMessage", "SMS"], mode: StatusRecordingSender.Mode = .sent(delivered: false), unavailableCalls: Set<Int> = []) {
         self.services = services
-        databaseURL = database
         source = StatusRecordingSender(database: database, mode: mode)
         self.unavailableCalls = unavailableCalls
     }
@@ -934,14 +938,7 @@ private actor AutomaticFixtureSender: MessagesSending, MessagesRouteDiscovering 
         """
         let outcome = AppleScriptExecutor(source: MessagesScriptingScript.routingBody + "\n" + handlers).execute(arguments: MessagesScriptingScript.arguments(target: target, payload: payload))
         guard outcome == .accepted else { return outcome }
-        let submitted = await source.send(target: target, payload: payload)
-        if case .individual(_, "SMS") = target {
-            var database: OpaquePointer?
-            guard sqlite3_open(databaseURL.path, &database) == SQLITE_OK else { XCTFail("Fixture database unavailable"); return .unknown }
-            defer { sqlite3_close(database) }
-            XCTAssertEqual(sqlite3_exec(database, "UPDATE message SET service='RCS' WHERE ROWID=(SELECT MAX(ROWID) FROM message)", nil, nil, nil), SQLITE_OK)
-        }
-        return submitted
+        return await source.send(target: target, payload: payload)
     }
     func dispatches() -> [(SendTarget, SendPayload)] { calls }
 }
@@ -962,24 +959,48 @@ extension SendOperationsTests {
         let ops = try fixture([], sender: sender)
         let result = try await ops.sendMessage(.init(recipients: [.init(query: "+15550009999")], text: "synthetic exact body"), now: now)
         XCTAssertEqual(result.status, .failed)
-        XCTAssertEqual(result.attempts.map(\.service), ["iMessage", "SMS"])
+        XCTAssertEqual(result.attempts.map(\.service), ["SMS", "iMessage"])
         XCTAssertEqual(result.attempts.map { $0.part.errorCode }, ["messages_route_unavailable", "messages_route_unavailable"])
         let calls = await sender.dispatches()
         XCTAssertEqual(calls.count, 2)
         XCTAssertEqual(calls[0].1, calls[1].1)
-        XCTAssertEqual(calls[1].0, .individual(handle: "+15550009999", service: "SMS"))
+        XCTAssertEqual(calls[0].0, .individual(handle: "+15550009999", service: "SMS"))
+        XCTAssertEqual(calls[1].0, .individual(handle: "+15550009999", service: "iMessage"))
     }
 
     func testAutomaticPredispatchAlternativeObservesNegotiatedRCSSuccess() async throws {
         let sender = AutomaticFixtureSender(database: root.appendingPathComponent("chat.db"), unavailableCalls: [1])
         let ops = try fixture([], sender: sender)
+        try sql("UPDATE message SET is_from_me=1,is_sent=1,error=0,service='iMessage' WHERE ROWID=1")
         let result = try await ops.sendMessage(.init(recipients: [.init(query: "+15550000001")], text: "synthetic"), now: now)
         XCTAssertEqual(result.status, .sent)
         XCTAssertEqual(result.attempts.map(\.service), ["iMessage", "SMS"])
         XCTAssertEqual(result.parts.first?.observedService, "RCS")
     }
 
-    func testAutomaticLocalServiceAbsenceSkipsProbeAndEmailNeverUsesRelay() async throws {
+    func testAutomaticHistoricalRelayUsesIMessagingAlternativeOnlyBeforeDispatch() async throws {
+        let sender = AutomaticFixtureSender(database: root.appendingPathComponent("chat.db"), unavailableCalls: [1])
+        let ops = try fixture([], sender: sender)
+        try sql("UPDATE message SET is_from_me=1,is_sent=1,error=0,service='RCS' WHERE ROWID=1")
+        let result = try await ops.sendMessage(.init(chatID: "chat-direct-guid", text: "synthetic"), now: now)
+        XCTAssertEqual(result.status, .sent)
+        XCTAssertEqual(result.attempts.map(\.service), ["SMS", "iMessage"])
+        XCTAssertEqual(result.parts.first?.observedService, "iMessage")
+    }
+
+    func testAutomaticServiceAvailabilityKeepsEmailIMessagingOnly() async throws {
+        let iMessageOnly = RouteAvailabilitySender(["iMessage"])
+        let iMessageOps = try fixture([], sender: iMessageOnly)
+        for handle in ["+15550009999", "new@example.test"] {
+            let result = try await iMessageOps.sendMessage(.init(recipients: [.init(query: handle)], text: "synthetic"), now: now)
+            XCTAssertEqual(result.attempts.map(\.service), ["iMessage"])
+        }
+        let iMessageTargets = await iMessageOnly.dispatchedTargets()
+        XCTAssertEqual(iMessageTargets, [
+            .individual(handle: "+15550009999", service: "iMessage"),
+            .individual(handle: "new@example.test", service: "iMessage"),
+        ])
+
         let sender = RouteAvailabilitySender(["SMS"])
         let ops = try fixture([], sender: sender)
         let result = try await ops.sendMessage(.init(recipients: [.init(query: "+15550009999")], text: "synthetic"), now: now)

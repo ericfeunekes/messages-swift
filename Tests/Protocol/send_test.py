@@ -120,6 +120,15 @@ async def checks(client, initialization):
     assert automatic["attempts"][0]["part"]["outcome"] == "sent"
     base.record("automatic transport without route preflight or service at MCP boundary")
 
+    phone = base.content(await client.call_tool("send_message", {
+        "recipients": [{"query": "+15550009999"}], "text": "new phone automatic route"
+    }))
+    assert phone["status"] == "unknown"
+    assert phone["attempts"][0]["service"] == "SMS"
+    last = json.loads(log.read_text().splitlines()[-1])
+    assert last["target"] == "+15550009999" and last["service"] == "SMS"
+    base.record("new phone defaults to SMS relay without a user service choice")
+
     direct = base.content(await client.call_tool("send_message", {
         "recipients": [{"query": "new@example.test"}], "service": "iMessage", "text": "new synthetic"
     }))

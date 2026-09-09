@@ -298,8 +298,8 @@ and IDs never become executable source. Blocking permission checks and script
 execution run off the main actor. A nonprompting public Automation check gates
 execution; setup owns the user permission request. Exact chat lookup and operation-selected
 individual service selection precede the send command. The operation defaults to
-available route history, then iMessage/SMS eligibility; an explicit service remains
-an advanced override. One SMS alternative is allowed only after the scripting
+available route history, then SMS/iMessage eligibility for a phone; an explicit
+service remains an advanced override. One alternate eligible service is allowed only after the scripting
 handler reports a route lookup failure before dispatch. Attempt snapshots live
 only in the result, and successful parts are not replayed. Errors after dispatch
 begins are conservatively unknown and never retried.

@@ -139,11 +139,17 @@ public actor MessagesOperations {
         let history = try store.latestRouteHistory(chatID: chatID, handle: chatID == nil ? handle : nil)
         let historical = history.service == "RCS" ? "SMS" : history.service
         let preferred = historical.flatMap { services.contains($0) && (phone || $0 == "iMessage") ? $0 : nil }
-        guard let service = preferred ?? (services.contains("iMessage") ? "iMessage" : (phone && services.contains("SMS") ? "SMS" : nil)) else {
+        guard let service = preferred ?? (phone && services.contains("SMS") ? "SMS" : (services.contains("iMessage") ? "iMessage" : nil)) else {
             throw SendRouteError.noAvailableService
         }
-        let alternative: SendTarget? = phone && service == "iMessage" && services.contains("SMS")
-            ? .individual(handle: handle, service: "SMS") : nil
+        let alternativeService: String? = if phone && service == "SMS" && services.contains("iMessage") {
+            "iMessage"
+        } else if phone && service == "iMessage" && services.contains("SMS") {
+            "SMS"
+        } else {
+            nil
+        }
+        let alternative = alternativeService.map { SendTarget.individual(handle: handle, service: $0) }
         return (.individual(handle: handle, service: service), alternative, service)
     }
 

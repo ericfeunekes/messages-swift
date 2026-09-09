@@ -33,8 +33,9 @@ A send result distinguishes submission, source-reported sending, pending status,
 Transport selection belongs inside the send operation. Normal approval covers the
 resolved recipients, text and files; choosing a service is not a required user
 step. Existing direct recipients use available route history. For unfamiliar phone
-numbers, prefer iMessage when available, with one SMS-relay alternative (which can
-negotiate RCS) only after evidence establishes that the first attempt did not send.
+numbers, prefer the SMS relay when available (which can negotiate RCS), otherwise
+iMessage. One eligible alternative is permitted only after evidence establishes
+that the first attempt did not send.
 A timeout, missing delivery receipt or ambiguous source match is not that evidence.
 Keep the approved destination/content unchanged and never replay successful parts.
 Email destinations have no SMS alternative; groups retain their exact native chat

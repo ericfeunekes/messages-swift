@@ -30,7 +30,7 @@ private final class FixtureContacts: ContactsDirectorySource {
 }
 
 // Inert test-only boundary: records synthetic dispatches, never contacts Messages.
-private actor FixtureSender: MessagesSending {
+private actor FixtureSender: MessagesSending, MessagesRouteDiscovering {
   struct Invocation: Codable { let target: String; let service: String?; let kind: String; let value: String }
   let log: URL
   let database: URL
@@ -61,9 +61,15 @@ private actor FixtureSender: MessagesSending {
     recordObservedRow(target: target, payload: payload, text: value, failed: value.contains("fixture-source-failed"))
     return .accepted
   }
+  func availableServices() async throws -> [String] { ["iMessage", "SMS", "RCS"] }
 
   private func recordObservedRow(target: SendTarget, payload: SendPayload, text: String, failed: Bool) {
-    guard case let .chat(chatID) = target, chatID == "chat-direct" || chatID == "chat-group" else { return }
+    let chatID: String
+    switch target {
+    case let .chat(id) where id == "chat-direct" || id == "chat-group": chatID = id
+    case let .individual(handle, _) where handle == "alice@example.test": chatID = "chat-direct"
+    default: return
+    }
     var handle: OpaquePointer?
     guard sqlite3_open(database.path, &handle) == SQLITE_OK, let handle else { return }
     defer { sqlite3_close(handle) }

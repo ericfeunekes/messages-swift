@@ -59,6 +59,7 @@ The reviewed imsg tests cover attributed bodies, unread selection, schema variat
 | Images and files | Attachment identity tied to message results; missing files; supported image decoding; no arbitrary-path read through the image operation |
 | Agent/client policy | Draft causes no send; approved preview invokes the intended write; changed content needs a new preview; client rejection causes no write |
 | Send integration | Direct and existing-group destinations, new direct recipients, text/files, partial outcomes and uncertain completion; no automatic retry or service switching |
+| Route preflight | Read-only enabled-account list, direct/group classification, historical hints, no-history options, and frozen explicit service before dispatch |
 | Performance | Cold/warm timings and peak memory, including rare-term/no-match decoded-body search at representative scale |
 
 Test core behavior independently of MCP, then test adapter wiring separately. If a diagnostic CLI is added, test real argument parsing, JSON output, stderr and exit statuses rather than duplicating the core tests.
@@ -538,3 +539,18 @@ to activity results. Logs are local under `.scratch/watch-integration/`.
 No installation, live data, sending or permission changes were part of these
 checks. Installed-client timeout and a genuine incoming-message watch remain
 separate live gates for the integration owner.
+
+### Sending status and route preflight
+
+The September 9 routing/status update passed 149 XCTest cases and 44 Swift
+Testing cases, plus the independent read/alias, send and activity MCP suites.
+These include real SQLite mutations for source error 22, missing delivery
+receipts, delayed competing messages, shared message associations, direct/group
+separation, and successful ordered text/file parts. Route tests cover new numbers,
+name/source-identity resolution, ambiguous contacts, unavailable relay, RCS history,
+newer failed/pending attempts, backdated imports and duplicate service handles.
+An existing reader also observes attributed-body replacement and decode failures.
+The final `provider_reported` delivery label passed its rebuilt focused test.
+Evidence is local under `.scratch/send-routing-validation/`; private message
+history is not part of these fixtures. Installed sending remains a separate live
+check, limited to the owner's authorized synthetic self-tests.

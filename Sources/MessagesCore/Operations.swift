@@ -33,33 +33,22 @@ public actor MessagesOperations {
         let target: SendTarget
         let destination: SendDestination
         if let chatID = input.chatID {
-            guard input.service == nil else { throw SendValidationError.invalidDestination }
             guard let chat = try store.chat(id: ChatID(rawValue: chatID)) else { throw OperationError.unknownChat(chatID) }
-            target = .chat(chatID)
-            destination = .init(chatID: chatID, service: chat.service, recipients: enrich(chat, people: people).participants)
+            let directHandle = directHandle(for: chat)
+            if let service = input.service {
+                guard let directHandle, ["iMessage", "SMS", "RCS"].contains(service) else { throw SendValidationError.invalidDestination }
+                target = .individual(handle: directHandle, service: service)
+                destination = .init(chatID: chatID, service: service, recipients: [participant(directHandle, people: people)!])
+            } else {
+                guard directHandle == nil else { throw SendValidationError.invalidDestination }
+                target = .chat(chatID)
+                destination = .init(chatID: chatID, service: chat.service, recipients: enrich(chat, people: people).participants)
+            }
             try cacheUsed(people, handles: chat.participants, now: now)
         } else {
             guard let recipients = input.recipients, recipients.count == 1,
                   let service = input.service, ["iMessage", "SMS", "RCS"].contains(service) else { throw SendValidationError.invalidDestination }
-            let selector = recipients[0]
-            guard (selector.query == nil) != (selector.sourceIdentity == nil) else { throw SendValidationError.invalidDestination }
-            let handles: [String]
-            let candidates: [ContactCandidate]
-            if let query = selector.query, Self.isExplicitSendHandle(query) {
-                // Explicit handles never expand to another address on the contact.
-                handles = [normalize(query)]
-                candidates = []
-            } else {
-                let found: [ContactPerson]
-                if let identity = selector.sourceIdentity { found = people.filter { $0.identity == identity } }
-                else {
-                    guard let query = selector.query, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw SendValidationError.invalidDestination }
-                    found = people.filter { personMatches($0, query: query) }
-                }
-                guard !found.isEmpty else { throw OperationError.contactNotFound }
-                candidates = found.count > 1 ? found.map { ContactCandidate(person: $0) } : []
-                handles = found.count == 1 ? Array(Set(found[0].handles.map(normalize))).sorted() : []
-            }
+            let (handles, candidates) = try resolvedSendRecipient(recipients[0], people: people)
             if !candidates.isEmpty || handles.count != 1 {
                 return .init(status: .needsChoice, delivery: "unconfirmed", destination: nil,
                              contactCandidates: candidates, handleCandidates: handles, parts: parts)
@@ -97,7 +86,8 @@ public actor MessagesOperations {
             }
             switch outcome {
             case .accepted:
-                await applyObservedStatus(after: fence, target: target, expectedService: destination.service, payload: payload, to: &result.parts[index])
+                let expectedService: String? = if case .individual = target { destination.service } else { nil }
+                await applyObservedStatus(after: fence, target: target, expectedService: expectedService, payload: payload, to: &result.parts[index])
             case .unavailable:
                 result.parts[index].outcome = .failed
                 result.parts[index].errorCode = "messages_route_unavailable"
@@ -112,14 +102,80 @@ public actor MessagesOperations {
             if outcome != .accepted || result.parts[index].outcome == .failed || result.parts[index].outcome == .unknown { break }
         }
         result.status = aggregateSendStatus(result.parts)
+        if result.status == .sent && result.parts.allSatisfy({ $0.isDelivered == true }) { result.delivery = "provider_reported" }
         return result
+    }
+
+    /// Resolves the service before the caller previews and freezes it for sending.
+    public func resolveSendRoute(_ input: ResolveSendRouteInput, now: Date = Date()) async throws -> ResolveSendRouteResult {
+        guard (input.chatID == nil) != (input.recipients == nil),
+              input.chatID.map({ !$0.isEmpty && !$0.utf8.contains(0) }) ?? true else { throw SendValidationError.invalidDestination }
+        let people = try preparedPeople(now: now)
+        let handle: String
+        let destination: SendDestination
+        if let chatID = input.chatID {
+            guard let chat = try store.chat(id: ChatID(rawValue: chatID)) else { throw OperationError.unknownChat(chatID) }
+            guard let direct = directHandle(for: chat) else {
+                return .init(kind: "group", destination: .init(chatID: chatID, service: chat.service, recipients: enrich(chat, people: people).participants), suggestedService: nil, suggestionBasis: "existing_group", serviceOptions: [])
+            }
+            handle = direct
+            destination = .init(chatID: chatID, service: nil, recipients: [participant(handle, people: people)!])
+        } else {
+            guard let recipients = input.recipients, recipients.count == 1 else { throw SendValidationError.invalidDestination }
+            let (handles, candidates) = try resolvedSendRecipient(recipients[0], people: people)
+            guard candidates.isEmpty, handles.count == 1, let resolved = handles.first else {
+                return .init(kind: "direct", destination: nil, suggestedService: nil, suggestionBasis: "needs_choice", serviceOptions: [], contactCandidates: candidates, handleCandidates: handles)
+            }
+            guard Self.isExplicitSendHandle(resolved) else { throw SendValidationError.invalidDestination }
+            handle = resolved
+            destination = .init(chatID: nil, service: nil, recipients: [participant(handle, people: people)!])
+        }
+        let services = try await discoveredServices()
+        let history = try store.latestRouteHistory(chatID: input.chatID, handle: input.chatID == nil ? handle : nil)
+        let candidate = history.service == "RCS" ? "SMS" : history.service
+        let suggested = candidate.flatMap { services.contains($0) ? $0 : nil }
+        let basis = candidate != nil && suggested == nil ? "service_unavailable" : history.basis
+        return .init(kind: "direct", destination: destination, suggestedService: suggested, suggestionBasis: basis, serviceOptions: services)
+    }
+
+    private func resolvedSendRecipient(_ selector: PersonSelector, people: [ContactPerson]) throws -> (handles: [String], candidates: [ContactCandidate]) {
+        guard (selector.query == nil) != (selector.sourceIdentity == nil) else { throw SendValidationError.invalidDestination }
+        let handles: [String]
+        let candidates: [ContactCandidate]
+        if let query = selector.query, Self.isExplicitSendHandle(query) {
+            // Explicit handles never expand to another address on the contact.
+            handles = [normalize(query)]
+            candidates = []
+        } else {
+            let found: [ContactPerson]
+            if let identity = selector.sourceIdentity { found = people.filter { $0.identity == identity } }
+            else {
+                guard let query = selector.query, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw SendValidationError.invalidDestination }
+                found = people.filter { personMatches($0, query: query) }
+            }
+            guard !found.isEmpty else { throw OperationError.contactNotFound }
+            candidates = found.count > 1 ? found.map { ContactCandidate(person: $0) } : []
+            handles = found.count == 1 ? Array(Set(found[0].handles.map(normalize))).sorted() : []
+        }
+        return (handles, candidates)
+    }
+
+    private func discoveredServices() async throws -> [String] {
+        guard let source = sender as? any MessagesRouteDiscovering else { throw SendRouteError.accountDiscoveryFailed }
+        return try await source.availableServices()
+    }
+
+    private func directHandle(for chat: ChatRecord) -> String? {
+        guard chat.participants.count == 1, Self.isExplicitSendHandle(chat.participants[0]),
+              normalize(chat.identifier) == normalize(chat.participants[0]) else { return nil }
+        return normalize(chat.participants[0])
     }
 
     private func applyObservedStatus(after fence: Int64, target: SendTarget, expectedService: String?, payload: SendPayload, to part: inout SendPartResult) async {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(1))
-        var observation: OutgoingStatusObservation?
-        repeat {
+        var observation: OutgoingStatusObservation = .none
+        while true {
             do {
                 observation = try store.outgoingMessageStatus(afterRowID: fence, target: target, expectedService: expectedService, payload: payload)
             } catch {
@@ -127,35 +183,10 @@ public actor MessagesOperations {
                 part.errorCode = "messages_status_check_failed"
                 return
             }
-            guard let observation else { break }
-            switch observation {
-            case .none:
-                break
-            case .ambiguous:
+            if observation == .ambiguous {
                 part.outcome = .unknown
                 part.errorCode = "messages_status_ambiguous"
                 return
-            case let .unique(observed):
-                part.messageID = observed.messageID
-                part.isSent = observed.isSent
-                part.isDelivered = observed.isDelivered
-                part.deliveryErrorCode = observed.deliveryErrorCode
-                part.observedService = observed.service
-                part.correlation = "unique_source_match"
-                if observed.isSent == true {
-                    if observed.deliveryErrorCode != nil && observed.deliveryErrorCode != 0 {
-                        part.outcome = .unknown
-                        part.errorCode = "messages_conflicting_provider_status"
-                        return
-                    }
-                    part.outcome = .sent
-                    return
-                }
-                if observed.isSent == false, observed.deliveryErrorCode != nil && observed.deliveryErrorCode != 0 {
-                    part.outcome = .failed
-                    part.errorCode = "messages_send_failed"
-                    return
-                }
             }
             if Task.isCancelled {
                 part.outcome = .unknown
@@ -164,20 +195,36 @@ public actor MessagesOperations {
             }
             guard clock.now < deadline else { break }
             try? await Task.sleep(for: .milliseconds(100))
-        } while clock.now < deadline
-        if case .unique = observation {
-            part.outcome = .pending
-        } else {
+        }
+        guard case let .unique(observed) = observation else {
             part.outcome = .unknown
             part.errorCode = "messages_status_unavailable"
+            return
         }
+        part.messageID = observed.messageID
+        part.isSent = observed.isSent
+        part.isDelivered = observed.isDelivered
+        part.deliveryErrorCode = observed.deliveryErrorCode
+        part.observedService = observed.service
+        part.correlation = "unique_source_match"
+        if observed.isSent == true {
+            if let error = observed.deliveryErrorCode, error != 0 {
+                part.outcome = .unknown
+                part.errorCode = "messages_conflicting_provider_status"
+            } else { part.outcome = .sent }
+        } else if observed.isSent == false, let error = observed.deliveryErrorCode, error != 0 {
+            part.outcome = .failed
+            part.errorCode = "messages_send_failed"
+        } else { part.outcome = .pending }
     }
 
-    private func aggregateSendStatus(_ parts: [SendPartResult]) -> SendStatus {
+    func aggregateSendStatus(_ parts: [SendPartResult]) -> SendStatus {
         if parts.contains(where: { $0.outcome == .unknown }) { return .unknown }
         let completed = parts.filter { $0.outcome != .notAttempted }
+        guard !completed.isEmpty else { return .unknown }
         if completed.allSatisfy({ $0.outcome == .failed }) { return .failed }
         if completed.contains(where: { $0.outcome == .failed }) { return .partial }
+        if parts.contains(where: { $0.outcome == .notAttempted }) { return .unknown }
         if completed.allSatisfy({ $0.outcome == .sent }) { return .sent }
         if completed.contains(where: { $0.outcome == .pending }) { return .pending }
         return .submitted

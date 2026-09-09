@@ -13,8 +13,30 @@ public struct SendMessageInput: Codable, Sendable, Equatable {
     }
 }
 
+public struct ResolveSendRouteInput: Codable, Sendable, Equatable {
+    public let chatID: String?
+    public let recipients: [PersonSelector]?
+    public init(chatID: String? = nil, recipients: [PersonSelector]? = nil) { self.chatID = chatID; self.recipients = recipients }
+}
+public struct ResolveSendRouteResult: Codable, Sendable, Equatable {
+    public let kind: String
+    public let destination: SendDestination?
+    public let suggestedService: String?
+    public let suggestionBasis: String
+    public let serviceOptions: [String]
+    public let contactCandidates: [ContactCandidate]
+    public let handleCandidates: [String]
+
+    public init(kind: String, destination: SendDestination?, suggestedService: String?, suggestionBasis: String, serviceOptions: [String], contactCandidates: [ContactCandidate] = [], handleCandidates: [String] = []) {
+        self.kind = kind; self.destination = destination; self.suggestedService = suggestedService
+        self.suggestionBasis = suggestionBasis; self.serviceOptions = serviceOptions
+        self.contactCandidates = contactCandidates; self.handleCandidates = handleCandidates
+    }
+}
+public enum SendRouteError: String, Error, Sendable { case accountDiscoveryFailed = "route_account_discovery_failed" }
+
 /// `submitted` is only a successful public Automation command. `sent`,
-/// `pending`, and `failed` require an exact outgoing source row.
+/// `pending`, and `failed` require a uniquely matched outgoing source row; attribution remains inferred.
 public enum SendStatus: String, Codable, Sendable {
     case submitted, pending, sent, failed, partial, unknown
     case needsChoice = "needs_choice"
@@ -29,8 +51,7 @@ public struct SendPartResult: Codable, Sendable, Equatable {
     public let fileIndex: Int?
     public var outcome: SendPartOutcome
     public var errorCode: String?
-    /// Present only when the sending boundary supplied an exact GUID and the
-    /// source row was found. It is never inferred from body/date/chat matches.
+    /// Present only for the GUID of a uniquely matched post-dispatch source row.
     public var messageID: String?
     public var isSent: Bool?
     public var isDelivered: Bool?
@@ -50,7 +71,7 @@ public struct SendDestination: Codable, Sendable, Equatable {
 }
 public struct SendMessageResult: Codable, Sendable, Equatable {
     public var status: SendStatus
-    public let delivery: String
+    public var delivery: String
     public let destination: SendDestination?
     public let contactCandidates: [ContactCandidate]
     public let handleCandidates: [String]

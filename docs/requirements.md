@@ -28,7 +28,7 @@ Drafting is an agent action and never invokes a send. Before any send, including
 
 The assistant owns interpreting intent and showing the preview. The client owns approval of the actual invocation. The Swift operation validates its arguments and executes the requested action; it does not authenticate conversational consent or maintain a parallel approval broker. OS Automation permission is a separate boundary.
 
-A send result distinguishes an operation accepted by Messages from confirmed delivery. An uncertain result does not trigger an automatic retry, transport change or duplicate send. Text plus multiple files must not be described as atomic unless the send boundary proves that behavior. If only part succeeds, report that partial outcome.
+A send result distinguishes submission, source-reported sending, pending status, failure and delivery. Known source failure is a tool error; missing delivery confirmation is not sending failure. A source-row match is labeled as inferred correlation rather than an identifier returned by AppleScript. An uncertain result does not trigger an automatic retry, transport change or duplicate send. Text plus multiple files must not be described as atomic unless the send boundary proves that behavior. If only part succeeds, report that partial outcome.
 
 The first release includes reading and sending. The policy above governs every send that is exposed.
 
@@ -45,6 +45,7 @@ These names describe the intended operation surface. Exact input and output sche
 | `read_messages` | One exact chat; newest-first pages, date/unread filtering and attachment metadata |
 | `search_messages` | Case-insensitive body search, conversation membership and date filters, newest-first pages |
 | `send_message` | Exactly one destination selector: stable chat identity or resolved recipients; text, local files or both, within the approved release scope |
+| `resolve_send_route` | Read-only direct-route preflight with enabled-service options and a conservative historical suggestion |
 | `count_message_activity` | Total/sent/received counts over a date range, overall or per chat, calendar buckets and ranking |
 | `read_image` | An image attachment identified by a message result, returned in a form the agent can view |
 | `read_attachment` | Complete bounded original file bytes identified by a message and its associated attachment; usable by the agent's existing document tools |

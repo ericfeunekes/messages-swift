@@ -28,10 +28,11 @@ public enum SendDispatchOutcome: String, Codable, Sendable {
 public protocol MessagesSending: Sendable {
     func send(target: SendTarget, payload: SendPayload) async -> SendDispatchOutcome
 }
+public protocol MessagesRouteDiscovering: Sendable { func availableServices() async throws -> [String] }
 
 /// Public Messages.app Automation transport. It deliberately reports only
 /// acceptance by Messages, never delivery to the recipient.
-public struct MessagesScriptingSender: MessagesSending {
+public struct MessagesScriptingSender: MessagesSending, MessagesRouteDiscovering {
     private let permission: @Sendable () -> Bool
     private let executor: AppleScriptExecuting
 
@@ -53,6 +54,38 @@ public struct MessagesScriptingSender: MessagesSending {
         let arguments = MessagesScriptingScript.arguments(target: target, payload: payload)
         let result = await Task.detached(priority: nil) { executor.execute(arguments: arguments) }.value
         return result
+    }
+
+    public func availableServices() async throws -> [String] {
+        guard await Task.detached(priority: nil, operation: permission).value else { throw SendRouteError.accountDiscoveryFailed }
+        return try await Task.detached(priority: nil) {
+            let source = #"""
+            tell application id "com.apple.MobileSMS"
+                set enabledServiceNames to {}
+                if (count of (every account whose enabled is true and service type is iMessage)) is 1 then set end of enabledServiceNames to "iMessage"
+                if (count of (every account whose enabled is true and service type is SMS)) is 1 then set end of enabledServiceNames to "SMS"
+                if (count of (every account whose enabled is true and service type is RCS)) is 1 then set end of enabledServiceNames to "RCS"
+                return enabledServiceNames
+            end tell
+            """#
+            var error: NSDictionary?
+            guard let value = NSAppleScript(source: source)?.executeAndReturnError(&error), error == nil else { throw SendRouteError.accountDiscoveryFailed }
+            return try Self.serviceNames(from: value)
+        }.value
+    }
+
+    static func serviceNames(from value: NSAppleEventDescriptor) throws -> [String] {
+        guard value.descriptorType == typeAEList else { throw SendRouteError.accountDiscoveryFailed }
+        var services: [String] = []
+        if value.numberOfItems > 0 {
+            for index in 1...value.numberOfItems {
+                guard let service = value.atIndex(index)?.stringValue,
+                      ["iMessage", "SMS", "RCS"].contains(service),
+                      !services.contains(service) else { throw SendRouteError.accountDiscoveryFailed }
+                services.append(service)
+            }
+        }
+        return services
     }
 }
 

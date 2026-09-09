@@ -1,7 +1,7 @@
 # Local operation schemas
 
 These are this project's own version 1 schemas. The typed definitions live in
-`Sources/MessagesCore/OperationModels.swift`; MCP accepts the same camelCase keys.
+`Sources/MessagesCore/`; MCP accepts the same camelCase keys.
 Unknown keys, wrong types and explicit nulls for non-nullable inputs are invalid.
 Dates are ISO-8601 strings with an explicit offset. Start is inclusive and end is
 exclusive. Limits default to 50 and range from 1 through 100.
@@ -13,7 +13,8 @@ exclusive. Limits default to 50 and range from 1 through 100.
 | `find_chats` | Optional `query`; `participants` defaults to `[]`; `membership` defaults to `contains_all`; `dateRange` defaults to `{}`; `unreadOnly` defaults to `false`; `limit`; optional `cursor` |
 | `read_messages` | Required `chatID`; `dateRange`, `unreadOnly`, `limit`, optional `cursor` |
 | `search_messages` | Required nonempty `query`; optional `chatID`; `participants`, `membership`, `dateRange`, `unreadOnly`, `limit`, optional `cursor` |
-| `send_message` | Exactly one of `chatID` or `recipients` (one participant selector); `service` required only with recipients (`iMessage`, `SMS`, `RCS`); optional nonempty `text`; `files` defaults to `[]` (absolute local file paths); text or files required |
+| `resolve_send_route` | Exactly one of `chatID` or `recipients` (one name, source identity or explicit handle); no content and no dispatch |
+| `send_message` | Exactly one of `chatID` or `recipients` (one participant selector); `service` required for direct chats and recipients, forbidden for groups (`iMessage`, `SMS`, `RCS`); optional nonempty `text`; `files` defaults to `[]` (absolute local file paths); text or files required |
 | `set_chat_alias` | Required `chatID` and `alias`; string sets/replaces this chat's alias, null removes it |
 | `read_image` | Required nonempty `messageID` and `attachmentID` from history/search; no path or rendering options |
 | `read_attachment` | Required nonempty `messageID` and `attachmentID` from history/search; no path |
@@ -141,14 +142,24 @@ remain unknown and are omitted; known false flags and numeric zero remain presen
 No Apple error/state label is inferred from these numbers. For example, a locally
 `available` attachment can coexist with an unsuccessful transfer state: local
 file availability is independent of delivery. These are observed provider fields,
-not a new send receipt or a promise that status has settled. `send_message` still
-reports only command acceptance with delivery unconfirmed, without polling.
+not a new send receipt or a promise that status has settled. Sending observes
+these fields within a bounded window as described below.
 
 ## Sending
 
-`chatID` selects an exact existing direct or group GUID and forbids a service
-override. Resolve names and aliases through `find_chats`, then preview the chosen
-chat's participants and service before sending. A label is never a chat ID.
+`resolve_send_route` is read-only and resolves the same one destination selector
+before preview: an exact chat or one recipient. It returns enabled local service
+options and a suggestion only when the newest outgoing direct-history row is a
+successful current hint. There is no public recipient-capability query: a new
+number with no usable history has options but no suggestion. A newer failed,
+pending, or conflicting row suppresses an older successful suggestion. SMS/RCS
+history suggests the SMS account, which may negotiate RCS. The result is never a
+delivery or capability guarantee.
+
+For `send_message`, an existing direct chat requires the explicitly selected,
+previewed service and is sent to its sole verified participant through that
+account. Groups retain their exact chat route and forbid a service override. A
+label is never a chat ID.
 `recipients` contains exactly one selector for an individual, including a new
 individual. It requires an explicit service in the confirmed preview. Multiple
 recipients do not create a new group. An explicit full phone number or email
@@ -156,7 +167,9 @@ selects that handle without expanding to other addresses on its contact. A name
 or source identity with multiple handles returns choices. Names resolve only
 against the selected Contacts source; duplicate names remain separate candidates.
 
-The result has `status`, `delivery: "unconfirmed"`, optional `destination`,
+The result has `status`, `delivery` (`provider_reported` only when every sent part has a
+true source delivery flag; otherwise `unconfirmed`). This is Messages reporting
+delivery, not an independent recipient acknowledgment. Other fields include optional `destination`,
 `contactCandidates`, `handleCandidates`, `parts` and optional `errorCode`.
 `destination` reports an optional `chatID`, service and recipients. A
 `needs_choice` result sends nothing; choose the contact/handle and obtain a revised
@@ -171,12 +184,16 @@ observed source row also reports `messageID`, raw `isSent`/`isDelivered`/error,
 uses one bounded post-dispatch candidate matched by exact destination and decoded
 text (or normalized staged attachment path); it is evidence, not a Message ID
 returned by AppleScript. Zero or competing candidates are `unknown`, never
-chosen by row order. Text precedes files in their supplied order. Outcomes are
+chosen by row order. Multiple chat associations for the same physical message
+are one candidate. An identical concurrent external send can still defeat
+attribution; the public scripting API provides no identifier to eliminate that
+limit. Text precedes files in their supplied order. Outcomes are
 `sent`, `pending`, `failed`, `unknown` or `not_attempted`. Sending stops at the
 first failed or unknown outcome; later parts remain `not_attempted`. `sent`
 requires source `isSent: true` with no conflicting error; delivery remains
 separate and may be false. `failed` requires source `isSent: false` plus a
-nonzero source error. A successful scripting command without a safe observation
+nonzero source error. A pre-dispatch rejection also returns `failed` with its
+error code and no invented source row. A successful scripting command without a safe observation
 is `unknown`; it is never described as sent. Aggregate `failed` and `partial`
 are MCP tool errors, while an uncertain result is not retried.
 Concurrent batches return `send_in_progress` without dispatch; no automatic

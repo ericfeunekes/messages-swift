@@ -171,7 +171,7 @@ async def activity_checks(client, initialization):
     listed = await client.list_tools()
     assert {tool.name for tool in listed.tools} == {
         "find_chats", "read_messages", "search_messages", "set_chat_alias", "count_message_activity",
-        "read_image", "read_attachment", "send_message", "watch_messages",
+        "read_image", "read_attachment", "resolve_send_route", "send_message", "watch_messages",
     }
     schema = {tool.name: tool.inputSchema for tool in listed.tools}["count_message_activity"]
     assert schema["additionalProperties"] is False

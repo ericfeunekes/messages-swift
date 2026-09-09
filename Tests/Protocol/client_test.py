@@ -122,6 +122,7 @@ async def first_process(client, initialization):
         "set_chat_alias",
         "read_image",
         "read_attachment",
+        "resolve_send_route",
         "send_message",
         "count_message_activity",
         "watch_messages",

@@ -13,9 +13,16 @@ import client_test as base
 async def checks(client, initialization):
     listed = {tool.name: tool for tool in (await client.list_tools()).tools}
     send = listed["send_message"]
+    route = listed["resolve_send_route"]
     assert send.annotations.readOnlyHint is False
     assert send.annotations.idempotentHint is False
     assert send.annotations.openWorldHint is True
+    assert route.annotations.readOnlyHint is True
+    assert route.inputSchema["required"] == []
+    assert route.inputSchema["properties"]["recipients"]["minItems"] == 1
+    assert route.inputSchema["properties"]["recipients"]["maxItems"] == 1
+    assert send.inputSchema["properties"]["recipients"]["minItems"] == 1
+    assert send.inputSchema["properties"]["recipients"]["maxItems"] == 1
     assert "Drafting never calls" in initialization.instructions
     assert "confirmation" in send.description
     assert "approved" not in send.inputSchema["properties"]
@@ -27,19 +34,48 @@ async def checks(client, initialization):
     assert not log.exists(), "draft preparation dispatched a message"
     base.record("draft preparation and advertised client confirmation guidance")
 
+    direct_route = base.content(await client.call_tool("resolve_send_route", {"chatID": "chat-direct"}))
+    assert direct_route["kind"] == "direct"
+    assert direct_route["destination"]["chatID"] == "chat-direct"
+    assert direct_route["suggestionBasis"] == "no_history"
+    assert direct_route.get("suggestedService") is None
+    assert isinstance(direct_route["serviceOptions"], list)
+    group_route = base.content(await client.call_tool("resolve_send_route", {"chatID": "chat-group"}))
+    assert group_route["kind"] == "group"
+    assert group_route["destination"]["chatID"] == "chat-group"
+    assert group_route.get("suggestedService") is None
+    assert group_route["serviceOptions"] == []
+    recipient_route = base.content(await client.call_tool("resolve_send_route", {
+        "recipients": [{"query": "new@example.test"}]
+    }))
+    assert recipient_route["kind"] == "direct"
+    assert recipient_route["destination"].get("chatID") is None
+    assert recipient_route["destination"]["recipients"][0]["handle"] == "new@example.test"
+    base.record("read-only direct and group route resolution exposes an honest suggestion basis")
+
     for args in [
         {"chatID": "chat-direct", "text": "x", "approved": True},
         {"chatID": "chat-direct", "files": None},
         {"chatID": "chat-direct", "text": ""},
         {"recipients": [{"query": "Alice"}], "service": "auto", "text": "x"},
+        {"recipients": []},
+        {"recipients": [{"query": "a@example.test"}, {"query": "b@example.test"}]},
     ]:
         await base.assert_invalid_params(client, "send_message", args)
+    for args in [
+        {"recipients": []},
+        {"recipients": [{"query": "a@example.test"}, {"query": "b@example.test"}]},
+        {"chatID": "chat-direct", "unexpected": True},
+    ]:
+        await base.assert_invalid_params(client, "resolve_send_route", args)
     for args, code in [
         ({"text": "x"}, "invalid_send_destination"),
         ({"chatID": "chat-direct", "recipients": [{"query": "Alice"}], "text": "x"}, "invalid_send_destination"),
+        ({"chatID": "chat-direct", "text": "x"}, "invalid_send_destination"),
+        ({"chatID": "chat-group", "service": "iMessage", "text": "x"}, "invalid_send_destination"),
         ({"chatID": "chat-direct"}, "invalid_send_content"),
         ({"chatID": "missing", "text": "x"}, "chat_not_found"),
-        ({"chatID": "chat-direct", "files": [str(base.STATE_DIRECTORY / "missing")]}, "invalid_send_file"),
+        ({"chatID": "chat-direct", "service": "iMessage", "files": [str(base.STATE_DIRECTORY / "missing")]}, "invalid_send_file"),
     ]:
         result = await client.call_tool("send_message", args)
         assert result.isError and base.content(result)["error"]["code"] == code
@@ -83,7 +119,7 @@ async def checks(client, initialization):
     base.record("new individual explicit service adapter route")
 
     failed = await client.call_tool("send_message", {
-        "chatID": "chat-direct", "text": "fixture-source-failed"
+        "chatID": "chat-direct", "service": "iMessage", "text": "fixture-source-failed"
     })
     failed_content = base.content(failed)
     assert failed.isError and failed_content["status"] == "failed"
@@ -97,7 +133,7 @@ async def checks(client, initialization):
         stopping.write_text("Synthetic failure injection\n")
         before = len(log.read_text().splitlines())
         result = base.content(await client.call_tool("send_message", {
-            "chatID": "chat-direct", "text": "first accepted", "files": [str(stopping), str(files[0])]
+            "chatID": "chat-direct", "service": "iMessage", "text": "first accepted", "files": [str(stopping), str(files[0])]
         }))
         assert result["status"] == expected and result["delivery"] == "unconfirmed"
         assert [part["outcome"] for part in result["parts"]] == ["sent", part, "not_attempted"]

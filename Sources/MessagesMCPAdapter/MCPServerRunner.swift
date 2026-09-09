@@ -8,7 +8,7 @@ public enum MCPServerRunner {
     }
 
     public static func run(operations: MessagesOperations, transport: any Transport) async throws {
-        let server = Server(name: "messages-swift", version: "0.1.0", instructions: "Read, search and count local Messages with selected Contacts names, local aliases and message-bound images/files. Ambiguous contacts require a choice. Drafting never calls send_message. Before every send, even an initial request saying send, show the resolved recipients, service, exact text and files and obtain confirmation. An unchanged confirmed preview needs no second conversational confirmation; any change requires a revised preview. The client approves the invocation. Never retry an uncertain or partial send automatically. Accepted means accepted by Messages, not delivered. Attachment tools return bounded image views or complete original file bytes; errors do not deliver a file. Decoding diagnostics mean search coverage is incomplete. Never interpret a cached label as a send destination.", capabilities: .init(tools: .init()))
+        let server = Server(name: "messages-swift", version: "0.1.0", instructions: "Read, search and count local Messages with selected Contacts names, local aliases and message-bound images/files. Ambiguous contacts require a choice. Drafting never calls send_message. Use resolve_send_route before previewing a direct send, then show resolved recipients, frozen service, exact text and files and obtain confirmation. An unchanged confirmed preview needs no second conversational confirmation; any change requires a revised preview. After confirmation, send directly to the resolved explicit handle or exact direct chatID with the frozen service; never resolve a contact name again. Group sends target exact existing chats and have no service argument. The client approves the invocation. Never retry an uncertain or partial send or change transport automatically. sent is a uniquely correlated post-dispatch source-row observation, not an AppleScript receipt or delivery guarantee; a source-confirmed failure is a tool error. Attachment tools return bounded image views or complete original file bytes; errors do not deliver a file. Decoding diagnostics mean search coverage is incomplete. Never interpret a cached label as a send destination or route guarantee.", capabilities: .init(tools: .init()))
         let watches = SessionWatches()
         let tools = ToolSchemas.tools
         await server.withMethodHandler(ListTools.self) { _ in .init(tools: tools) }
@@ -68,6 +68,8 @@ public enum MCPServerRunner {
                     return try encodeAttachment(await operations.readImage(decoder.decode(ReadAttachmentInput.self, from: data)), image: true)
                 case "read_attachment":
                     return try encodeAttachment(await operations.readAttachment(decoder.decode(ReadAttachmentInput.self, from: data)), image: false)
+                case "resolve_send_route":
+                    return try encode(await operations.resolveSendRoute(decoder.decode(ResolveSendRouteInput.self, from: data)))
                 case "send_message":
                     let result = try await operations.sendMessage(decoder.decode(SendMessageInput.self, from: data))
                     return try encode(result, isError: result.status == .failed || result.status == .partial)
@@ -147,6 +149,7 @@ public enum MCPServerRunner {
         if let error = error as? WatchError { return error.rawValue }
         if let error = error as? AttachmentReadError { return error.rawValue }
         if let error = error as? SendValidationError { return error.rawValue }
+        if let error = error as? SendRouteError { return error.rawValue }
         if let error = error as? ActivityError {
             switch error {
             case .invalidTimeZone: return "invalid_time_zone"

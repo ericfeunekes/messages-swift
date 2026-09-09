@@ -15,6 +15,28 @@ public enum OutgoingStatusObservation: Sendable, Equatable {
 }
 
 extension MessageStore {
+    func latestRouteHistory(chatID: String?, handle: String?) throws -> (service: String?, basis: String) {
+        try withSnapshot { database, schema, _ in
+            guard schema.has("is_sent") else { return (nil, "no_history") }
+            let errorColumn = schema.has("error") ? "m.error" : "NULL"
+            let serviceColumn = schema.has("service") ? "m.service" : "NULL"
+            let sql: String
+            let values: [SQLiteValue]
+            if let chatID {
+                sql = "SELECT m.is_sent, \(errorColumn), \(serviceColumn) FROM message m JOIN chat_message_join cmj ON cmj.message_id=m.ROWID JOIN chat c ON c.ROWID=cmj.chat_id WHERE c.guid=? AND m.is_from_me!=0 ORDER BY m.date DESC, m.ROWID DESC LIMIT 1"
+                values = [.text(chatID)]
+            } else if let handle {
+                sql = "SELECT m.is_sent, \(errorColumn), \(serviceColumn) FROM message m JOIN chat_message_join cmj ON cmj.message_id=m.ROWID WHERE cmj.chat_id IN (SELECT chj.chat_id FROM chat_handle_join chj JOIN chat dc ON dc.ROWID=chj.chat_id GROUP BY chj.chat_id HAVING COUNT(*)=1 AND lower(MAX(dc.chat_identifier))=? AND MAX(chj.handle_id) IN (SELECT h.ROWID FROM handle h WHERE lower(h.id)=?)) AND m.is_from_me!=0 ORDER BY m.date DESC, m.ROWID DESC LIMIT 1"
+                values = [.text(handle.lowercased()), .text(handle.lowercased())]
+            } else { return (nil, "no_history") }
+            let statement = try SQLiteStatement(database, sql); defer { statement.finalize() }
+            try statement.bind(values); guard try statement.step() else { return (nil, "no_history") }
+            let sent = !statement.isNull(at: 0) && statement.integer(at: 0) != 0
+            let error = statement.isNull(at: 1) ? nil : statement.integer(at: 1)
+            let service = statement.text(at: 2)
+            return sent && (error == nil || error == 0) && service != nil ? (service, "latest_successful") : (nil, sent ? "history_conflicted" : "last_attempt_unconfirmed")
+        }
+    }
     func outgoingMatchFence() throws -> Int64 {
         try withSnapshot { database, _, _ in try latestMessageID(database: database) }
     }
@@ -36,13 +58,14 @@ extension MessageStore {
                 JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
                 WHERE cmj.chat_id IN (
                     SELECT chj.chat_id
-                    FROM chat_handle_join chj JOIN handle h ON h.ROWID = chj.handle_id
-                    WHERE lower(h.id) = ?
+                    FROM chat_handle_join chj JOIN chat dc ON dc.ROWID = chj.chat_id
                     GROUP BY chj.chat_id
-                    HAVING COUNT(*) = 1
+                    HAVING COUNT(*) = 1 AND lower(MAX(dc.chat_identifier)) = ? AND MAX(chj.handle_id) IN (
+                        SELECT h.ROWID FROM handle h WHERE lower(h.id) = ?
+                    )
                 )
                 """
-                targetValues = [.text(handle.lowercased())]
+                targetValues = [.text(handle.lowercased()), .text(handle.lowercased())]
             }
             let payloadSQL: String
             let payloadValues: [SQLiteValue]
@@ -53,8 +76,8 @@ extension MessageStore {
             case .file(let path):
                 guard schema.hasAttachmentTables else { return .none }
                 let normalized = URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL.path
-                let home = FileManager.default.homeDirectoryForCurrentUser.path
-                payloadSQL = "EXISTS (SELECT 1 FROM message_attachment_join maj JOIN attachment a ON a.ROWID = maj.attachment_id WHERE maj.message_id = m.ROWID AND (a.filename = ? OR replace(a.filename, '~', ?) = ?))"
+                let home = FileManager.default.homeDirectoryForCurrentUser.path + "/"
+                payloadSQL = "EXISTS (SELECT 1 FROM message_attachment_join maj JOIN attachment a ON a.ROWID = maj.attachment_id WHERE maj.message_id = m.ROWID AND (a.filename = ? OR (a.filename LIKE '~/%' AND ? || substr(a.filename, 3) = ?)))"
                 payloadValues = [.text(normalized), .text(home), .text(normalized)]
             }
             let serviceSQL: String
@@ -64,7 +87,7 @@ extension MessageStore {
             default: serviceSQL = ""
             }
             let status = try SQLiteStatement(database, """
-                SELECT m.ROWID, m.guid, \(schema.has("text") ? "m.text" : "NULL"), \(schema.has("attributedbody") ? "m.attributedbody" : "NULL"), \(schema.has("is_sent") ? "m.is_sent" : "NULL"), \(schema.has("is_delivered") ? "m.is_delivered" : "NULL"), \(schema.has("error") ? "m.error" : "NULL"), \(schema.has("service") ? "m.service" : "NULL")
+                SELECT DISTINCT m.ROWID, m.guid, \(schema.has("text") ? "m.text" : "NULL"), \(schema.has("attributedbody") ? "m.attributedbody" : "NULL"), \(schema.has("is_sent") ? "m.is_sent" : "NULL"), \(schema.has("is_delivered") ? "m.is_delivered" : "NULL"), \(schema.has("error") ? "m.error" : "NULL"), \(schema.has("service") ? "m.service" : "NULL")
                 FROM message m
                 \(targetSQL) AND m.ROWID > ? AND m.is_from_me != 0\(serviceSQL) AND \(payloadSQL)
                 ORDER BY m.ROWID ASC

@@ -233,6 +233,11 @@ by files through `MessagesSending`. The shared actor rejects overlapping send
 batches while allowing read operations during the asynchronous scripting call.
 The [schema](schemas.md#sending) owns the per-part and aggregate outcomes.
 
+`resolveSendRoute` uses the same resolver before preview. Its public AppleScript
+account query reads enabled iMessage/SMS/RCS accounts only; it does not probe a
+recipient or dispatch a message. On September 9, 2026, the extracted query ran
+read-only on the Intel host and returned iMessage and SMS.
+
 `MessagesScriptingSender` executes fixed public AppleScript handlers in-process
 using `NSAppleScript` and Apple Event string arguments. User text, paths, handles
 and IDs never become executable source. Blocking permission checks and script
@@ -241,8 +246,11 @@ execution; setup owns the user permission request. Exact chat lookup and explici
 individual service selection precede the send command. Errors after dispatch
 begins are conservatively unknown and never retried.
 
-The adapter returns no message ID or delivery claim because the scripting send
-reply does not prove either. `StagedOutgoingFiles` prepares the whole file batch
+The scripting reply supplies no message ID. The operation observes a bounded
+post-dispatch window and returns a source-row ID only when one candidate matches
+the destination, service family and decoded text or staged path. The result labels
+that inference and separates source sending and delivery flags. Competing or
+missing candidates remain unknown. `StagedOutgoingFiles` prepares the whole file batch
 under the app-owned `Library/Messages/Attachments/messages-swift` directory before
 any dispatch. This gives imagent a Messages-readable path instead of the caller's
 repository/Desktop path. Private per-batch/per-index directories retain original

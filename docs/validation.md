@@ -571,7 +571,8 @@ options with no historical suggestion. This proves active calls, not idle wakeup
 Synthetic automatic-routing tests exercise the shared operation against SQLite
 and the production AppleScript routing handler with inert boundary handlers.
 They cover history/RCS relay selection, no enabled route, email isolation,
-iMessage-first routing, one pre-dispatch alternative, negotiated RCS observation,
+SMS-first routing for unfamiliar phones, one pre-dispatch alternative in either
+direction, negotiated RCS observation,
 explicit overrides, unchanged multipart payloads and no replay of successful
 parts. Source failure, pending, missing/competing rows, delayed success and
 conflicting delivery flags do not cause another attempt. The stdio MCP suite
@@ -594,12 +595,24 @@ This does not complete automatic recovery for a new Android number whose
 submission is accepted first. No live send, native UI operation, installation
 or OS permission change is part of these tests.
 
-The September 9 final synthetic run passed 156 XCTest and 44 Swift Testing
+The earlier September 9 automatic-routing run passed 156 XCTest and 44 Swift Testing
 cases, and all nine send MCP checks. The compiled test bundle ran from the
 short repository checkout path because the isolated worktree path exceeds the
 macOS Unix socket pathname limit. No source or runtime fix was made for that
 fixture-path constraint. Evidence is under the routing worktree's ignored
 `.scratch/automatic-routing/` directory.
+
+The later SMS-default change passed all 43 focused send-operation tests. All eight
+scripting tests also passed, including a real inert AppleScript regression that
+raises the route-lookup error after dispatch for both SMS and iMessage and requires
+`unknown`. The sole production sender and runtime wiring were independently
+reviewed; no post-dispatch `unavailable` path exists. Its protocol explicitly makes
+that no-dispatch guarantee part of the outcome contract.
+
+The updated MCP suite passed the new SMS-default SQLite/adapter assertion before
+failing a later attachment fixture assertion involving the existing ctime guard.
+This is not a fully passing protocol-suite result. File-guard behavior was not
+weakened. Complete focused logs are in `.scratch/default-transport-validation/`.
 
 ### App-restart connection recovery
 

@@ -54,7 +54,7 @@ This is the register of unresolved requirements and design choices. It separates
 
 - **Platform floor:** proposed macOS 14+, reflecting the reviewed public Swift core, with Intel as the first tested architecture. Older Intel macOS support and Apple Silicon release coverage are not yet commitments.
 - **Dependency:** the public IMsgCore builds on Intel, but its unchanged public API cannot express the required descending continuation, membership filtering, explicit decoding failures and arbitrary-range counts. Source seams are internal. A narrow maintained read/query adaptation is the supported recommendation; exact packaging and API contracts remain implementation decisions.
-- **MCP integration:** a native Intel Swift fixture passed independent protocol tests; see [validation](validation.md#preparatory-evidence-september-8-2026). Actual desktop discovery, image rendering and normal agent/client approval remain open. A separate app-server probe was blocked before initialization; this does not establish a Messages or MCP product failure.
+- **MCP integration:** a native Intel Swift fixture passed independent protocol tests; see [validation](validation.md#preparatory-evidence-september-8-2026). Installed desktop discovery, native image viewing and PDF consumption are now verified; see validation. Normal agent/client approval remains a separate live boundary. A separate app-server probe was blocked before initialization; this does not establish a Messages or MCP product failure.
 
 ## Message interpretation
 
@@ -64,7 +64,7 @@ Activity uses the shared source classifier: ordinary and attachment-only user me
 
 Calendar timezone defaults to the Mac's current zone at the initial request and remains fixed through continuation. Weeks start Monday. Ranking compares whole-range conversation totals and retains each chat's chronological bucket series, including zeros. Explicit activity timestamps accept at most microsecond precision within the documented native Date range. Source and cursor bounds remain integer nanoseconds. An aggregate-result digest rejects mutations that would invalidate rank/offset continuation; it stores no bodies or historical snapshot. See [schemas](schemas.md#activity).
 
-Incoming image/file retrieval follows the [local attachment contract](schemas.md#incoming-attachment-retrieval); real client viewing and file consumption remain live validation gates.
+Incoming image/file retrieval follows the [local attachment contract](schemas.md#incoming-attachment-retrieval); native client viewing and PDF consumption passed the September 9 installed checks in validation; other format and size limits retain their own tests.
 
 ## Search matching policy
 

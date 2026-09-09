@@ -655,3 +655,28 @@ a fresh read worked, and the old store cursor was rejected. One authorized
 synthetic self-text then sent successfully with no service argument, one recorded
 attempt and one outgoing source row; its incoming content was verified. No live
 write was deliberately interrupted and no contractor or group was messaged.
+
+### Native client attachment and activity QA
+
+On September 9, the installed app was exercised through Codex's native MCP
+tools, using existing synthetic self-messages without further sends.
+`read_image` returned an inline PNG that was visually inspected as the expected
+24 by 12 red rectangle. `read_attachment` returned the complete 1,529-byte PDF
+as an embedded resource; those exact bytes were decoded and rendered with
+Poppler, and the single red-rectangle page was visually inspected. This closes
+the native client image-viewing and document-consumption gates for these fixtures.
+It does not establish every attachment format or file-size boundary.
+
+Activity was reconciled against complete `read_messages` results over a fixed
+UTC day. The self conversation contained 18 ordinary unretracted rows: 11
+outgoing and 7 incoming. Overall counts matched, as did the two partial calendar
+day buckets in America/Halifax. A separate top-three chat ranking returned
+totals 33, 19 and 18; independent history calls reconciled each total and direction
+split, with no pagination or decoding failures. Outgoing counts describe source
+direction, including failed submissions, rather than successful delivery.
+
+Redacted evidence and the received synthetic PDF/render are in the orchestration
+workspace's ignored `.scratch/live-install/native-client-qa.md` and adjacent files.
+One reused subagent client returned `Transport closed`; the root native client
+succeeded. That particular client failure was not independently attributed to
+the known pre-installation stale-bridge limitation.

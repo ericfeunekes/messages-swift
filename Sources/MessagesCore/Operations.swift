@@ -25,8 +25,8 @@ public actor MessagesOperations {
         guard input.text != nil || !input.files.isEmpty,
               input.text.map({ !$0.isEmpty && !$0.utf8.contains(0) }) ?? true else { throw SendValidationError.invalidContent }
         var parts: [SendPartResult] = []
-        if input.text != nil { parts.append(.init(index: 0, kind: "text", fileIndex: nil, outcome: .notAttempted)) }
-        for index in input.files.indices { parts.append(.init(index: parts.count, kind: "file", fileIndex: index, outcome: .notAttempted)) }
+        if input.text != nil { parts.append(.init(index: 0, kind: "text", fileIndex: nil, outcome: .notAttempted, errorCode: nil, messageID: nil, isSent: nil, isDelivered: nil, deliveryErrorCode: nil, observedService: nil, correlation: nil)) }
+        for index in input.files.indices { parts.append(.init(index: parts.count, kind: "file", fileIndex: index, outcome: .notAttempted, errorCode: nil, messageID: nil, isSent: nil, isDelivered: nil, deliveryErrorCode: nil, observedService: nil, correlation: nil)) }
         // Validate the whole batch before any command can leave this process.
         let files = try input.files.map { try OutgoingFile(path: $0) }
         let people = try preparedPeople(now: now)
@@ -69,7 +69,7 @@ public actor MessagesOperations {
             destination = .init(chatID: nil, service: service, recipients: [participant(handle, people: people)!])
             try cacheUsed(people, handles: [handle], now: now)
         }
-        var result = SendMessageResult(status: .rejected, delivery: "unconfirmed", destination: destination,
+        var result = SendMessageResult(status: .failed, delivery: "unconfirmed", destination: destination,
                                        contactCandidates: [], handleCandidates: [], parts: parts)
         // Actor reentrancy must not interleave two multi-part batches.
         guard !sendInProgress else { result.errorCode = "send_in_progress"; return result }
@@ -83,35 +83,104 @@ public actor MessagesOperations {
                 break
             }
             guard files.allSatisfy({ $0.isUnchanged() }) else {
-                result.parts[index].outcome = .rejected
+                result.parts[index].outcome = .failed
                 result.parts[index].errorCode = "send_file_changed"
                 break
             }
             let payload: SendPayload
             if let fileIndex = result.parts[index].fileIndex { payload = .file(staged.paths[fileIndex]) }
             else { payload = .text(input.text!) }
+            let fence = try store.outgoingMatchFence()
             let outcome = await sender.send(target: target, payload: payload)
             if let fileIndex = result.parts[index].fileIndex, outcome == .accepted || outcome == .unknown {
                 staged.retain(index: fileIndex)
             }
             switch outcome {
-            case .accepted: result.parts[index].outcome = .accepted
+            case .accepted:
+                await applyObservedStatus(after: fence, target: target, expectedService: destination.service, payload: payload, to: &result.parts[index])
             case .unavailable:
-                result.parts[index].outcome = .rejected
+                result.parts[index].outcome = .failed
                 result.parts[index].errorCode = "messages_route_unavailable"
             case .rejected:
-                result.parts[index].outcome = .rejected
+                result.parts[index].outcome = .failed
                 result.parts[index].errorCode = "messages_rejected"
             case .unknown:
                 result.parts[index].outcome = .unknown
                 result.parts[index].errorCode = "messages_outcome_unknown"
             }
-            if outcome != .accepted { break }
+            if result.parts[index].errorCode == "send_cancelled" { result.errorCode = "send_cancelled"; break }
+            if outcome != .accepted || result.parts[index].outcome == .failed || result.parts[index].outcome == .unknown { break }
         }
-        if result.parts.contains(where: { $0.outcome == .unknown }) { result.status = .unknown }
-        else if result.parts.allSatisfy({ $0.outcome == .accepted }) { result.status = .accepted }
-        else if result.parts.contains(where: { $0.outcome == .accepted }) { result.status = .partial }
+        result.status = aggregateSendStatus(result.parts)
         return result
+    }
+
+    private func applyObservedStatus(after fence: Int64, target: SendTarget, expectedService: String?, payload: SendPayload, to part: inout SendPartResult) async {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(1))
+        var observation: OutgoingStatusObservation?
+        repeat {
+            do {
+                observation = try store.outgoingMessageStatus(afterRowID: fence, target: target, expectedService: expectedService, payload: payload)
+            } catch {
+                part.outcome = .unknown
+                part.errorCode = "messages_status_check_failed"
+                return
+            }
+            guard let observation else { break }
+            switch observation {
+            case .none:
+                break
+            case .ambiguous:
+                part.outcome = .unknown
+                part.errorCode = "messages_status_ambiguous"
+                return
+            case let .unique(observed):
+                part.messageID = observed.messageID
+                part.isSent = observed.isSent
+                part.isDelivered = observed.isDelivered
+                part.deliveryErrorCode = observed.deliveryErrorCode
+                part.observedService = observed.service
+                part.correlation = "unique_source_match"
+                if observed.isSent == true {
+                    if observed.deliveryErrorCode != nil && observed.deliveryErrorCode != 0 {
+                        part.outcome = .unknown
+                        part.errorCode = "messages_conflicting_provider_status"
+                        return
+                    }
+                    part.outcome = .sent
+                    return
+                }
+                if observed.isSent == false, observed.deliveryErrorCode != nil && observed.deliveryErrorCode != 0 {
+                    part.outcome = .failed
+                    part.errorCode = "messages_send_failed"
+                    return
+                }
+            }
+            if Task.isCancelled {
+                part.outcome = .unknown
+                part.errorCode = "send_cancelled"
+                return
+            }
+            guard clock.now < deadline else { break }
+            try? await Task.sleep(for: .milliseconds(100))
+        } while clock.now < deadline
+        if case .unique = observation {
+            part.outcome = .pending
+        } else {
+            part.outcome = .unknown
+            part.errorCode = "messages_status_unavailable"
+        }
+    }
+
+    private func aggregateSendStatus(_ parts: [SendPartResult]) -> SendStatus {
+        if parts.contains(where: { $0.outcome == .unknown }) { return .unknown }
+        let completed = parts.filter { $0.outcome != .notAttempted }
+        if completed.allSatisfy({ $0.outcome == .failed }) { return .failed }
+        if completed.contains(where: { $0.outcome == .failed }) { return .partial }
+        if completed.allSatisfy({ $0.outcome == .sent }) { return .sent }
+        if completed.contains(where: { $0.outcome == .pending }) { return .pending }
+        return .submitted
     }
 
     private static func isExplicitSendHandle(_ value: String) -> Bool {

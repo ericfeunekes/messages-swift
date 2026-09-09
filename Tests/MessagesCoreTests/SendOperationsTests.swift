@@ -58,6 +58,42 @@ private actor RecordingSender: MessagesSending {
     func dispatches() -> [(SendTarget, SendPayload)] { recorded }
 }
 
+/// Simulates an accepted public script command followed by the source row it
+/// caused. It writes the same SQLite fixture that the operation observes.
+private final class StatusRecordingSender: MessagesSending, @unchecked Sendable {
+    enum Mode: Equatable { case failed(Int), sent(delivered: Bool), duplicate, absent }
+    private let database: URL
+    private let mode: Mode
+
+    init(database: URL, mode: Mode) { self.database = database; self.mode = mode }
+
+    func send(target: SendTarget, payload: SendPayload) async -> SendDispatchOutcome {
+        guard case let .text(text) = payload else { return .accepted }
+        guard case .chat = target else { return .accepted }
+        switch mode {
+        case .absent: return .accepted
+        case .failed(let error): insert(text: text, sent: 0, delivered: 0, error: error, suffix: "failed")
+        case .sent(let delivered): insert(text: text, sent: 1, delivered: delivered ? 1 : 0, error: 0, suffix: "sent")
+        case .duplicate:
+            insert(text: text, sent: 0, delivered: 0, error: 22, suffix: "one")
+            insert(text: text, sent: 1, delivered: 1, error: 0, suffix: "two")
+        }
+        return .accepted
+    }
+
+    private func insert(text: String, sent: Int, delivered: Int, error: Int, suffix: String) {
+        var database: OpaquePointer?
+        guard sqlite3_open(self.database.path, &database) == SQLITE_OK, let database else { return }
+        defer { sqlite3_close(database) }
+        let escaped = text.replacingOccurrences(of: "'", with: "''")
+        let statement = """
+        INSERT INTO message (guid,date,text,is_from_me,is_sent,is_delivered,error) VALUES ('status-\(suffix)-\(UUID().uuidString)',999,'\(escaped)',1,\(sent),\(delivered),\(error));
+        INSERT INTO chat_message_join VALUES (1,last_insert_rowid());
+        """
+        _ = sqlite3_exec(database, statement, nil, nil, nil)
+    }
+}
+
 private actor SuspendedSender: MessagesSending {
     private var recorded: [(SendTarget, SendPayload)] = []
     private var entered = false
@@ -127,7 +163,7 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
         CREATE TABLE handle (id TEXT);
         CREATE TABLE chat_handle_join (chat_id INTEGER, handle_id INTEGER);
         CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER);
-        CREATE TABLE message (guid TEXT, date INTEGER, text TEXT, attributedBody BLOB, is_from_me INTEGER DEFAULT 0, is_read INTEGER DEFAULT 0, handle_id INTEGER, service TEXT DEFAULT 'iMessage', associated_message_guid TEXT, associated_message_type INTEGER DEFAULT 0, item_type INTEGER DEFAULT 0, balloon_bundle_id TEXT, date_edited INTEGER DEFAULT 0, date_retracted INTEGER DEFAULT 0);
+        CREATE TABLE message (guid TEXT, date INTEGER, text TEXT, attributedBody BLOB, is_from_me INTEGER DEFAULT 0, is_read INTEGER DEFAULT 0, handle_id INTEGER, service TEXT DEFAULT 'iMessage', associated_message_guid TEXT, associated_message_type INTEGER DEFAULT 0, item_type INTEGER DEFAULT 0, balloon_bundle_id TEXT, date_edited INTEGER DEFAULT 0, date_retracted INTEGER DEFAULT 0, is_sent INTEGER, is_delivered INTEGER, error INTEGER);
         CREATE TABLE attachment (guid TEXT, filename TEXT, mime_type TEXT);
         CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
         INSERT INTO handle VALUES ('+15550000001'), ('alice@example.test'), ('bob@example.test');
@@ -184,9 +220,9 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
         let direct = try await ops.sendMessage(.init(chatID: "chat-direct-guid", text: "direct"), now: now)
         let group = try await ops.sendMessage(.init(chatID: "chat-group-guid", text: "group"), now: now)
 
-        XCTAssertEqual(direct.status, .accepted)
+        XCTAssertEqual(direct.status, .unknown)
         XCTAssertEqual(direct.destination?.service, "iMessage")
-        XCTAssertEqual(group.status, .accepted)
+        XCTAssertEqual(group.status, .unknown)
         XCTAssertEqual(group.destination?.service, "SMS")
         let dispatches = await sender.dispatches()
         XCTAssertEqual(dispatches.map(\.0), [.chat("chat-direct-guid"), .chat("chat-group-guid")])
@@ -229,7 +265,7 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
         let sender = RecordingSender()
         let ops = try fixture([person("alice", "Alice", ["+15550000001", "alice@example.test"])], sender: sender)
         let result = try await ops.sendMessage(.init(recipients: [.init(query: "ALICE@example.test")], service: "RCS", text: "hello"), now: now)
-        XCTAssertEqual(result.status, .accepted)
+        XCTAssertEqual(result.status, .unknown)
         XCTAssertEqual(result.destination?.recipients.map(\.handle), ["alice@example.test"])
         let dispatches = await sender.dispatches()
         XCTAssertEqual(dispatches.map(\.0), [.individual(handle: "alice@example.test", service: "RCS")])
@@ -243,7 +279,7 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
         let contactSender = RecordingSender()
         let contactOps = try fixture([person("alice", "Alice", ["+15550000001", "alice@example.test"])], sender: contactSender)
         let contactResult = try await contactOps.sendMessage(.init(recipients: [.init(query: "+1 (555) 000-0001")], service: "SMS", text: "phone"), now: now)
-        XCTAssertEqual(contactResult.status, .accepted)
+        XCTAssertEqual(contactResult.status, .unknown)
         XCTAssertEqual(contactResult.destination?.recipients.map(\.handle), ["+15550000001"])
         let contactDispatches = await contactSender.dispatches()
         XCTAssertEqual(contactDispatches.map(\.0), [.individual(handle: "+15550000001", service: "SMS")])
@@ -251,9 +287,49 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
         let absentSender = RecordingSender()
         let absentOps = try fixture([], sender: absentSender)
         let absentResult = try await absentOps.sendMessage(.init(recipients: [.init(query: "+1 (555) 000-0001")], service: "SMS", text: "phone"), now: now)
-        XCTAssertEqual(absentResult.status, .accepted)
+        XCTAssertEqual(absentResult.status, .unknown)
         let absentDispatches = await absentSender.dispatches()
         XCTAssertEqual(absentDispatches.map(\.0), [.individual(handle: "+15550000001", service: "SMS")])
+    }
+
+    func testUniqueObservedSourceFailureMakesTheSendFail() async throws {
+        let sender = StatusRecordingSender(database: root.appendingPathComponent("chat.db"), mode: .failed(22))
+        let ops = try fixture([person("alice", "Alice", ["+15550000001"])], sender: sender)
+
+        let result = try await ops.sendMessage(.init(chatID: "chat-direct-guid", text: "provider failed"), now: now)
+
+        XCTAssertEqual(result.status, .failed)
+        XCTAssertEqual(result.parts.map(\.outcome), [.failed])
+        XCTAssertEqual(result.parts[0].errorCode, "messages_send_failed")
+        XCTAssertEqual(result.parts[0].isSent, false)
+        XCTAssertEqual(result.parts[0].deliveryErrorCode, 22)
+        XCTAssertNotNil(result.parts[0].messageID)
+    }
+
+    func testSentDoesNotRequireARecipientDeliveryReceipt() async throws {
+        let sender = StatusRecordingSender(database: root.appendingPathComponent("chat.db"), mode: .sent(delivered: false))
+        let ops = try fixture([person("alice", "Alice", ["+15550000001"])], sender: sender)
+
+        let result = try await ops.sendMessage(.init(chatID: "chat-direct-guid", text: "sent no receipt"), now: now)
+
+        XCTAssertEqual(result.status, .sent)
+        XCTAssertEqual(result.parts.map(\.outcome), [.sent])
+        XCTAssertEqual(result.parts[0].isSent, true)
+        XCTAssertEqual(result.parts[0].isDelivered, false)
+        XCTAssertEqual(result.parts[0].deliveryErrorCode, 0)
+    }
+
+    func testMissingOrAmbiguousPostDispatchSourceRowsRemainUnknownWithoutRetry() async throws {
+        for mode in [StatusRecordingSender.Mode.absent, .duplicate] {
+            let sender = StatusRecordingSender(database: root.appendingPathComponent("chat.db"), mode: mode)
+            let ops = try fixture([person("alice", "Alice", ["+15550000001"])], sender: sender)
+
+            let result = try await ops.sendMessage(.init(chatID: "chat-direct-guid", text: "same payload"), now: now)
+
+            XCTAssertEqual(result.status, .unknown)
+            XCTAssertEqual(result.parts.map(\.outcome), [.unknown])
+            XCTAssertEqual(result.parts[0].errorCode, mode == .absent ? "messages_status_unavailable" : "messages_status_ambiguous")
+        }
     }
 
     func testInvalidDestinationsAndContentNeverDispatch() async throws {
@@ -300,16 +376,13 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
         let first = try localFile("first.txt")
         let second = try localFile("second.txt")
         let result = try await ops.sendMessage(.init(chatID: "chat-direct-guid", text: "first text", files: [first.path, second.path]), now: now)
-        XCTAssertEqual(result.status, .accepted)
+        XCTAssertEqual(result.status, .unknown)
         XCTAssertEqual(result.delivery, "unconfirmed")
-        XCTAssertEqual(result.parts.map(\.outcome), [.accepted, .accepted, .accepted])
+        XCTAssertEqual(result.parts.map(\.outcome), [.unknown, .unknown, .unknown])
         let dispatches = await sender.dispatches()
         XCTAssertEqual(dispatches.map(\.1).first, .text("first text"))
         let staged = try stagedPaths(in: Array(dispatches.dropFirst()))
-        XCTAssertEqual(staged.map { $0.lastPathComponent }, ["first.txt", "second.txt"])
-        XCTAssertNotEqual(staged[0].path, first.path)
-        XCTAssertNotEqual(staged[1].path, second.path)
-        XCTAssertEqual(try staged.map { try Data(contentsOf: $0) }, [Data("fixture".utf8), Data("fixture".utf8)])
+        XCTAssertTrue(staged.isEmpty, "Unknown post-dispatch status stops before file sends")
     }
 
     func testOneAndMultipleFilesWithoutText() async throws {
@@ -318,21 +391,21 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
         let first = try localFile("file-only-one.txt")
         let second = try localFile("file-only-two.txt")
         let single = try await ops.sendMessage(.init(chatID: "chat-group-guid", files: [first.path]), now: now)
-        XCTAssertEqual(single.status, .accepted)
+        XCTAssertEqual(single.status, .unknown)
         XCTAssertEqual(single.parts.map(\.kind), ["file"])
         XCTAssertEqual(single.parts.map(\.fileIndex), [0])
         let multiple = try await ops.sendMessage(.init(chatID: "chat-group-guid", files: [first.path, second.path]), now: now)
-        XCTAssertEqual(multiple.status, .accepted)
+        XCTAssertEqual(multiple.status, .unknown)
         XCTAssertEqual(multiple.parts.map(\.fileIndex), [0, 1])
         let calls = await sender.dispatches()
         let staged = try stagedPaths(in: calls)
-        XCTAssertEqual(staged.map { $0.lastPathComponent }, ["file-only-one.txt", "file-only-one.txt", "file-only-two.txt"])
-        XCTAssertEqual(try staged.map { try Data(contentsOf: $0) }, [Data("fixture".utf8), Data("fixture".utf8), Data("fixture".utf8)])
+        XCTAssertEqual(staged.map { $0.lastPathComponent }, ["file-only-one.txt", "file-only-one.txt"])
+        XCTAssertEqual(try staged.map { try Data(contentsOf: $0) }, [Data("fixture".utf8), Data("fixture".utf8)])
         XCTAssertEqual(Set(staged.map(\.path)).count, staged.count)
     }
 
     func testRejectedAndUnknownStopTheBatchWithoutRetry() async throws {
-        for (outcome, expectedStatus, expectedPart) in [(SendDispatchOutcome.rejected, SendStatus.rejected, SendPartOutcome.rejected), (.unknown, .unknown, .unknown), (.unavailable, .rejected, .rejected)] {
+        for (outcome, expectedStatus, expectedPart) in [(SendDispatchOutcome.rejected, SendStatus.failed, SendPartOutcome.failed), (.unknown, .unknown, .unknown), (.unavailable, .failed, .failed)] {
             let sender = RecordingSender(outcomes: [outcome, .accepted])
             let ops = try fixture([person("alice", "Alice", ["+15550000001"])], sender: sender)
             let first = try localFile("first-\(outcome.rawValue).txt")
@@ -353,9 +426,8 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
             let sender = RecordingSender(mutation: mutation(file))
             let ops = try fixture([person("alice", "Alice", ["+15550000001"])], sender: sender)
             let result = try await ops.sendMessage(.init(chatID: "chat-direct-guid", text: "text", files: [file.path]), now: now)
-            XCTAssertEqual(result.status, .partial)
-            XCTAssertEqual(result.parts.map(\.outcome), [.accepted, .rejected])
-            XCTAssertEqual(result.parts[1].errorCode, "send_file_changed")
+            XCTAssertEqual(result.status, .unknown)
+            XCTAssertEqual(result.parts.map(\.outcome), [.unknown, .notAttempted])
             let dispatches = await sender.dispatches()
             XCTAssertEqual(dispatches.map(\.1), [.text("text")])
         }
@@ -368,7 +440,7 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
         await sender.waitForFirstDispatch()
 
         let second = try await ops.sendMessage(.init(chatID: "chat-direct-guid", text: "second"), now: now)
-        XCTAssertEqual(second.status, .rejected)
+        XCTAssertEqual(second.status, .failed)
         XCTAssertEqual(second.errorCode, "send_in_progress")
         XCTAssertEqual(second.parts.map(\.outcome), [.notAttempted])
         let pausedDispatches = await sender.dispatches()
@@ -376,8 +448,8 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
 
         await sender.release()
         let firstResult = try await first
-        XCTAssertEqual(firstResult.status, .accepted)
-        XCTAssertEqual(firstResult.parts.map(\.outcome), [.accepted])
+        XCTAssertEqual(firstResult.status, .unknown)
+        XCTAssertEqual(firstResult.parts.map(\.outcome), [.unknown])
     }
 
     func testCancellationAfterAcceptedTextStopsFilesAndReleasesBatchGuard() async throws {
@@ -390,15 +462,15 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
         first.cancel()
         await sender.release()
         let cancelled = try await first.value
-        XCTAssertEqual(cancelled.status, .partial)
+        XCTAssertEqual(cancelled.status, .unknown)
         XCTAssertEqual(cancelled.errorCode, "send_cancelled")
-        XCTAssertEqual(cancelled.parts.map(\.outcome), [.accepted, .notAttempted])
+        XCTAssertEqual(cancelled.parts.map(\.outcome), [.unknown, .notAttempted])
         let cancelledDispatches = await sender.dispatches()
         XCTAssertEqual(cancelledDispatches.map(\.1), [.text("text")])
         XCTAssertTrue(try outgoingContents().isEmpty)
 
         let next = try await ops.sendMessage(.init(chatID: "chat-direct-guid", text: "next"), now: now)
-        XCTAssertEqual(next.status, .accepted)
+        XCTAssertEqual(next.status, .unknown)
         let finalDispatches = await sender.dispatches()
         XCTAssertEqual(finalDispatches.map(\.1), [.text("text"), .text("next")])
     }
@@ -420,7 +492,7 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
 
         await sender.release()
         let result = try await task.value
-        XCTAssertEqual(result.status, .accepted)
+        XCTAssertEqual(result.status, .unknown)
     }
 
     func testCancellationRetainsOnlyTheAcceptedFileStage() async throws {
@@ -437,8 +509,8 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
         await sender.release()
         let result = try await task.value
 
-        XCTAssertEqual(result.status, .partial)
-        XCTAssertEqual(result.parts.map(\.outcome), [.accepted, .notAttempted])
+        XCTAssertEqual(result.status, .unknown)
+        XCTAssertEqual(result.parts.map(\.outcome), [.unknown, .notAttempted])
         let dispatched = try stagedPaths(in: await sender.dispatches())
         XCTAssertEqual(dispatched.count, 1)
         XCTAssertTrue(FileManager.default.fileExists(atPath: dispatched[0].path))
@@ -460,7 +532,7 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
 
         let result = try await ops.sendMessage(.init(chatID: "chat-direct-guid", text: "only text"), now: now)
 
-        XCTAssertEqual(result.status, .accepted)
+        XCTAssertEqual(result.status, .unknown)
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("outgoing").path))
     }
 
@@ -484,9 +556,9 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
 
     func testFileRetentionTracksAcceptedAndUnknownOutcomesPerPart() async throws {
         for (outcomes, expectedStatus, retainedCount) in [
-            ([SendDispatchOutcome.accepted, .unknown], SendStatus.unknown, 2),
-            ([.rejected], SendStatus.rejected, 0),
-            ([.unavailable], SendStatus.rejected, 0),
+            ([SendDispatchOutcome.accepted, .unknown], SendStatus.unknown, 1),
+            ([.rejected], SendStatus.failed, 0),
+            ([.unavailable], SendStatus.failed, 0),
         ] {
             let sender = RecordingSender(outcomes: outcomes)
             let ops = try fixture([person("alice", "Alice", ["+15550000001"])], sender: sender)
@@ -497,7 +569,7 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
 
             XCTAssertEqual(result.status, expectedStatus)
             let dispatches = await sender.dispatches()
-            XCTAssertEqual(dispatches.count, retainedCount == 0 ? 1 : 2)
+            XCTAssertEqual(dispatches.count, 1)
             let files = try stagedPaths(in: dispatches)
             XCTAssertEqual(files.filter { FileManager.default.fileExists(atPath: $0.path) }.count, retainedCount)
             XCTAssertEqual((try? outgoingContents())?.count ?? 0, retainedCount == 0 ? 0 : 1)
@@ -514,12 +586,11 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
 
             let result = try await ops.sendMessage(.init(chatID: "chat-direct-guid", files: [first.path, second.path, third.path]), now: now)
 
-            XCTAssertEqual(result.status, .partial)
-            XCTAssertEqual(result.parts.map(\.outcome), [.accepted, .rejected, .notAttempted])
+            XCTAssertEqual(result.status, .unknown)
+            XCTAssertEqual(result.parts.map(\.outcome), [.unknown, .notAttempted, .notAttempted])
             let staged = try stagedPaths(in: await sender.dispatches())
-            XCTAssertEqual(staged.count, 2)
+            XCTAssertEqual(staged.count, 1)
             XCTAssertTrue(FileManager.default.fileExists(atPath: staged[0].path))
-            XCTAssertFalse(FileManager.default.fileExists(atPath: staged[1].path))
             let batch = staged[0].deletingLastPathComponent().deletingLastPathComponent()
             XCTAssertFalse(FileManager.default.fileExists(atPath: batch.appendingPathComponent("2").path))
             XCTAssertEqual(try outgoingContents().count, 1)

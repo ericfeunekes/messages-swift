@@ -47,7 +47,8 @@ def build_database():
                 is_from_me INTEGER NOT NULL, is_read INTEGER, service TEXT,
                 handle_id INTEGER, associated_message_guid TEXT,
                 associated_message_type INTEGER, item_type INTEGER,
-                balloon_bundle_id TEXT, date_edited INTEGER, date_retracted INTEGER
+                balloon_bundle_id TEXT, date_edited INTEGER, date_retracted INTEGER,
+                is_sent INTEGER, is_delivered INTEGER, error INTEGER
             );
             CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER, PRIMARY KEY(chat_id, message_id));
             CREATE TABLE attachment (filename TEXT, transfer_name TEXT, uti TEXT, mime_type TEXT, total_bytes INTEGER, is_sticker INTEGER);

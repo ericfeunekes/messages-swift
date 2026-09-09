@@ -165,14 +165,20 @@ preview confirmation. Validation failures use the normal error envelope with
 `send_file_changed` or `send_file_staging_failed`.
 
 Each part has its zero-based `index`, `kind` (`text` or `file`), optional
-zero-based `fileIndex`, `outcome` and optional stable `errorCode`. Text precedes
-files in their supplied order. Outcomes are `accepted`, `rejected`, `unknown` or
-`not_attempted`. Sending stops at the first rejection or unknown outcome; later
-parts remain `not_attempted`. Overall status is `accepted` only when every part
-is accepted, `partial` when some are accepted before a known failure, `unknown`
-when any dispatch is uncertain, and `rejected` when none are accepted and none
-are uncertain. Unknown takes precedence even after earlier accepted parts.
-`accepted` means Messages accepted the command, never confirmed delivery.
+zero-based `fileIndex`, `outcome` and optional stable `errorCode`. A uniquely
+observed source row also reports `messageID`, raw `isSent`/`isDelivered`/error,
+`observedService`, and `correlation: "unique_source_match"`. This correlation
+uses one bounded post-dispatch candidate matched by exact destination and decoded
+text (or normalized staged attachment path); it is evidence, not a Message ID
+returned by AppleScript. Zero or competing candidates are `unknown`, never
+chosen by row order. Text precedes files in their supplied order. Outcomes are
+`sent`, `pending`, `failed`, `unknown` or `not_attempted`. Sending stops at the
+first failed or unknown outcome; later parts remain `not_attempted`. `sent`
+requires source `isSent: true` with no conflicting error; delivery remains
+separate and may be false. `failed` requires source `isSent: false` plus a
+nonzero source error. A successful scripting command without a safe observation
+is `unknown`; it is never described as sent. Aggregate `failed` and `partial`
+are MCP tool errors, while an uncertain result is not retried.
 Concurrent batches return `send_in_progress` without dispatch; no automatic
 retry, duplicate send, new-group creation or service switching occurs.
 

@@ -1,3 +1,4 @@
+import CSQLite
 import Foundation
 import MessagesCore
 import MessagesMCPAdapter
@@ -32,7 +33,8 @@ private final class FixtureContacts: ContactsDirectorySource {
 private actor FixtureSender: MessagesSending {
   struct Invocation: Codable { let target: String; let service: String?; let kind: String; let value: String }
   let log: URL
-  init(log: URL) { self.log = log }
+  let database: URL
+  init(log: URL, database: URL) { self.log = log; self.database = database }
   func send(target: SendTarget, payload: SendPayload) async -> SendDispatchOutcome {
     let targetID: String
     let service: String?
@@ -56,7 +58,30 @@ private actor FixtureSender: MessagesSending {
     } catch { return .unknown }
     if value.contains("fixture-unknown") { return .unknown }
     if value.contains("fixture-rejected") { return .rejected }
+    recordObservedRow(target: target, payload: payload, text: value, failed: value.contains("fixture-source-failed"))
     return .accepted
+  }
+
+  private func recordObservedRow(target: SendTarget, payload: SendPayload, text: String, failed: Bool) {
+    guard case let .chat(chatID) = target, chatID == "chat-direct" || chatID == "chat-group" else { return }
+    var handle: OpaquePointer?
+    guard sqlite3_open(database.path, &handle) == SQLITE_OK, let handle else { return }
+    defer { sqlite3_close(handle) }
+    let escapedText = text.replacingOccurrences(of: "'", with: "''")
+    let row = "fixture-observed-\(UUID().uuidString)"
+    let chatRow = chatID == "chat-direct" ? 1 : 2
+    let status = failed ? "0, 0, 22" : "1, 0, 0"
+    let attachmentSQL: String
+    if case let .file(path) = payload {
+      let escapedPath = path.replacingOccurrences(of: "'", with: "''")
+      attachmentSQL = "INSERT INTO attachment (filename) VALUES ('\(escapedPath)'); INSERT INTO message_attachment_join VALUES ((SELECT MAX(ROWID) FROM message), last_insert_rowid());"
+    } else { attachmentSQL = "" }
+    let sql = """
+      INSERT INTO message (guid,date,text,is_from_me,is_sent,is_delivered,error,service) VALUES ('\(row)',999,'\(escapedText)',1,\(status),'iMessage');
+      INSERT INTO chat_message_join VALUES (\(chatRow),last_insert_rowid());
+      \(attachmentSQL)
+      """
+    _ = sqlite3_exec(handle, sql, nil, nil, nil)
   }
 }
 
@@ -81,7 +106,7 @@ let operations = MessagesOperations(
   directory: FixtureContacts(),
   binding: ContactsContainerBinding(containerID: "synthetic-selected-container"),
   state: try LocalState(directory: fixture.stateDirectory),
-  sender: FixtureSender(log: fixture.stateDirectory.appendingPathComponent("send-invocations.jsonl")),
+  sender: FixtureSender(log: fixture.stateDirectory.appendingPathComponent("send-invocations.jsonl"), database: URL(fileURLWithPath: fixture.database)),
   outgoingStagingDirectory: fixture.stateDirectory.appendingPathComponent("outgoing")
 )
 if let index = CommandLine.arguments.firstIndex(of: "--socket"), index + 1 < CommandLine.arguments.count {

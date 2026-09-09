@@ -60,8 +60,8 @@ async def checks(client, initialization):
     result = base.content(await client.call_tool("send_message", {
         "chatID": "chat-group", "text": text, "files": [str(path) for path in files]
     }))
-    assert result["status"] == "accepted" and result["delivery"] == "unconfirmed"
-    assert [part["outcome"] for part in result["parts"]] == ["accepted"] * 3
+    assert result["status"] == "sent" and result["delivery"] == "unconfirmed"
+    assert [part["outcome"] for part in result["parts"]] == ["sent"] * 3
     calls = [json.loads(line) for line in log.read_text().splitlines()]
     assert (calls[0]["target"], calls[0]["kind"], calls[0]["value"]) == ("chat-group", "text", text)
     for index, original in enumerate(files):
@@ -77,12 +77,22 @@ async def checks(client, initialization):
         "recipients": [{"query": "new@example.test"}], "service": "iMessage", "text": "new synthetic"
     }))
     assert direct["destination"]["recipients"][0]["handle"] == "new@example.test"
-    assert direct["status"] == "accepted"
+    assert direct["status"] == "unknown"
     last = json.loads(log.read_text().splitlines()[-1])
     assert last["target"] == "new@example.test" and last["service"] == "iMessage"
     base.record("new individual explicit service adapter route")
 
-    for marker, expected in [("fixture-unknown", "unknown"), ("fixture-rejected", "partial")]:
+    failed = await client.call_tool("send_message", {
+        "chatID": "chat-direct", "text": "fixture-source-failed"
+    })
+    failed_content = base.content(failed)
+    assert failed.isError and failed_content["status"] == "failed"
+    assert failed_content["parts"][0]["outcome"] == "failed"
+    assert failed_content["parts"][0]["deliveryErrorCode"] == 22
+    assert failed_content["parts"][0]["correlation"] == "unique_source_match"
+    base.record("accepted script submission with source error is an MCP tool failure")
+
+    for marker, expected, part in [("fixture-unknown", "unknown", "unknown"), ("fixture-rejected", "partial", "failed")]:
         stopping = base.STATE_DIRECTORY / f"{marker}.txt"
         stopping.write_text("Synthetic failure injection\n")
         before = len(log.read_text().splitlines())
@@ -90,7 +100,7 @@ async def checks(client, initialization):
             "chatID": "chat-direct", "text": "first accepted", "files": [str(stopping), str(files[0])]
         }))
         assert result["status"] == expected and result["delivery"] == "unconfirmed"
-        assert [part["outcome"] for part in result["parts"]] == ["accepted", marker.removeprefix("fixture-"), "not_attempted"]
+        assert [part["outcome"] for part in result["parts"]] == ["sent", part, "not_attempted"]
         lines = log.read_text().splitlines()
         assert len(lines) == before + 2
         staged = Path(json.loads(lines[-1])["value"])

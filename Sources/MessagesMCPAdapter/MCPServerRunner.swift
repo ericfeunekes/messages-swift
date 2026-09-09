@@ -69,7 +69,8 @@ public enum MCPServerRunner {
                 case "read_attachment":
                     return try encodeAttachment(await operations.readAttachment(decoder.decode(ReadAttachmentInput.self, from: data)), image: false)
                 case "send_message":
-                    return try encode(await operations.sendMessage(decoder.decode(SendMessageInput.self, from: data)))
+                    let result = try await operations.sendMessage(decoder.decode(SendMessageInput.self, from: data))
+                    return try encode(result, isError: result.status == .failed || result.status == .partial)
                 case "find_chats":
                     return try encode(await operations.findChats(decoder.decode(FindChatsInput.self, from: data)))
                 case "read_messages":

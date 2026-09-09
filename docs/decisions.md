@@ -14,6 +14,23 @@ This is the register of unresolved requirements and design choices. It separates
 - **New groups:** existing groups first; selected by the owner. Creation of new groups is outside the first release. New direct recipients and existing-group sending have distinct paths and must not be classified together.
 - **Files:** text and local attachments are part of the intended send operation. Text precedes files in input order as separate commands, stopping at the first failure or unknown outcome. The local [send schema](schemas.md#sending) reports each part and never claims atomicity or delivery. File changes across commands stop remaining dispatch. Files are copied into private Messages-readable staging before any command; accepted/uncertain inputs are retained for asynchronous consumption, without an unproven expiry timer.
 
+## Sending and organization decisions
+
+- **Automatic transport:** the owner wants service selection hidden inside the
+  MCP operation, including history-based routing and a bounded iMessage-to-SMS/RCS
+  alternative for new phone numbers after a confirmed non-send. The installed
+  explicit-service interface is not the desired normal user workflow. Uncertain
+  attempts and missing delivery receipts must not cause another send.
+- **Organization delivery:** implement one narrowly scoped operation at a time.
+  Establish native conversation targeting, build the action, exercise synthetic
+  boundary/failure tests, then validate the native action on an explicitly
+  disposable conversation. Pin and mute provide reversible first cases; read-state
+  changes and deletion require their own side-effect and recovery proof. Fixture
+  identity alone does not prove a Messages UI locator. The user's general feature
+  request is not permission to delete a real conversation during testing.
+- **Monitoring:** unattended monitoring and idle-task wakeups are removed from
+  the requested work.
+
 ## Directory and cache
 
 - **Contact authority:** Google Contacts associated with the user’s Gmail account; selected by the owner. The account identifier belongs in private setup, not public documentation.

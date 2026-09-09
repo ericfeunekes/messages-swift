@@ -30,6 +30,17 @@ The assistant owns interpreting intent and showing the preview. The client owns 
 
 A send result distinguishes submission, source-reported sending, pending status, failure and delivery. Known source failure is a tool error; missing delivery confirmation is not sending failure. A source-row match is labeled as inferred correlation rather than an identifier returned by AppleScript. An uncertain result does not trigger an automatic retry, transport change or duplicate send. Text plus multiple files must not be described as atomic unless the send boundary proves that behavior. If only part succeeds, report that partial outcome.
 
+Transport selection belongs inside the send operation. Normal approval covers the
+resolved recipients, text and files; choosing a service is not a required user
+step. Existing direct recipients use available route history. For unfamiliar phone
+numbers, prefer iMessage when available, with one SMS-relay alternative (which can
+negotiate RCS) only after evidence establishes that the first attempt did not send.
+A timeout, missing delivery receipt or ambiguous source match is not that evidence.
+Keep the approved destination/content unchanged and never replay successful parts.
+Email destinations have no SMS alternative; groups retain their exact native chat
+route. Return the actual attempts and outcomes for diagnosis without requiring the
+user to manage transport details.
+
 The first release includes reading and sending. The policy above governs every send that is exposed.
 
 Group sending targets existing conversations in the first release. Creating new groups is outside that release; this does not exclude new individual recipients.
@@ -74,6 +85,7 @@ Image and file access resolve an attachment belonging to a message result. Neith
 - Existing public Swift source and tests may be reused with their licenses. The implementation does not wrap the imsg CLI as its domain layer.
 - No decompilation, disassembly, proprietary binary redistribution, private-framework injection or macOS security-setting changes.
 - No requirement to edit or unsend messages, emit typing indicators/read receipts, create polls, manage accounts or provide a remote messaging bot.
+- Unattended monitoring and idle-task wakeups are outside the requested scope.
 - Contact reconciliation, deduplication, migration and edits to the authoritative contact directory are separate work. This project consumes the resulting directory and does not merge or move contacts.
 - A native menu-bar app owns OS permission setup, selected Contacts source, connection status and the shared operation/cache lifetime. Multiple agent connections use that one owner. No separate background service, cloud service, embedded language model or general plugin framework is required.
 

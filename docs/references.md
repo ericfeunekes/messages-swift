@@ -1,6 +1,6 @@
 # References and provenance
 
-Sources were inspected on September 8, 2026. Observable behavior, public source and implementation inference are distinct evidence categories.
+Sources were inspected on September 8–9, 2026. Observable behavior, public source and implementation inference are distinct evidence categories.
 
 ## OpenAI Messages
 
@@ -22,6 +22,34 @@ Relevant source areas at that revision:
 - [Basic sender](https://github.com/openclaw/imsg/blob/1db058697a1f6705d907516e668acf2e25ab57d8/Sources/IMsgCore/MessageSender.swift), [statistics](https://github.com/openclaw/imsg/blob/1db058697a1f6705d907516e668acf2e25ab57d8/Sources/IMsgCore/MessageStore%2BStats.swift) and [core tests](https://github.com/openclaw/imsg/tree/1db058697a1f6705d907516e668acf2e25ab57d8/Tests/IMsgCoreTests).
 
 The public read/query and basic scripting paths are the baseline. Advanced injected helpers and private-framework functionality are outside this project's scope. Library sender filters, forward cursors and daily counts are not substitutes for the conversation filters, descending continuation and arbitrary-window counts in our requirements.
+
+## Public conversation organization evidence
+
+[Beeper platform-imessage at cda1545](https://github.com/beeper/platform-imessage/tree/cda1545b87db4aeb2ec266bd8f9f335eec67c323)
+was inspected as prior art. Its `license.txt` is MIT. `MessagesDeepLink.swift`
+constructs address/group/message links; `MessagesController.swift` implements
+read-state, alert and deletion actions through Accessibility. This establishes
+candidate interfaces, not this project's runtime support or targeting correctness.
+Its selection checks can use predicted titles, focus/layout events or delays;
+these do not independently identify a conversation. Its source notes that the UI
+can merge direct service histories, so one database chat must not be assumed to
+represent an entire native deletion scope.
+
+The complete upstream implementation is not public-API-only: its window helper
+uses CGS/SkyLight, localized labels load private ChatKit bundles, and the package
+contains an IMessagePrivateSPI target. No such implementation was adopted here.
+Four launch properties used upstream were absent from the installed public SDK.
+Only public AppKit, Carbon Apple Events and ApplicationServices interfaces were
+used in this project's independent navigation probes.
+
+A local probe automatically navigated from an empty self-message composer to a
+neutral composer and back to the exact observed synthetic self conversation,
+without user clicks or message actions. This proves that one navigation path;
+it does not prove arbitrary targets, draft preservation or unread-state behavior.
+A secondary-instance probe returned a distinct Messages PID but could not obtain
+a usable AX window. A later unsandboxed session check found the macOS login window
+frontmost, so that run cannot establish that secondary automation is unsupported.
+Live organization testing requires an interactive desktop and a verified target.
 
 ## Platform and protocol
 

@@ -613,6 +613,9 @@ The updated MCP suite passed the new SMS-default SQLite/adapter assertion before
 failing a later attachment fixture assertion involving the existing ctime guard.
 This is not a fully passing protocol-suite result. File-guard behavior was not
 weakened. Complete focused logs are in `.scratch/default-transport-validation/`.
+The signed SMS-default build was then installed and reopened. The existing native
+Codex client successfully read through the app restart, returning one message and
+zero decoding failures. No additional live send was required for this update.
 
 ### App-restart connection recovery
 

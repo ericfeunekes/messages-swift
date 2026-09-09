@@ -164,9 +164,10 @@ Integrated production latency and live WAL contention remain unmeasured.
 
 The response preserves source row kinds and independent edited/retracted state;
 activity normalization remains an explicit decision in [decisions](decisions.md).
-Sending (direct and existing group, text/files with partial/uncertain outcomes)
-and activity buckets/counts remain first-release work. Incoming attachment payload
-proof and live client gates are defined in [incoming attachment checks](#incoming-attachment-checks).
+Activity buckets/counts remain first-release work. Sending synthetic proof and
+live gates are defined in [sending boundary validation](#sending-boundary-validation).
+Incoming attachment payload proof and live client gates are defined in
+[incoming attachment checks](#incoming-attachment-checks).
 No placeholder operation claims success for those capabilities.
 
 ### Initial implementation result: September 8, 2026, commit 582be93
@@ -286,3 +287,92 @@ The installed app was then signed with an existing certificate identity from the
 user login keychain. Its designated requirement names the app identifier, Apple
 certificate chain and certificate subject rather than a per-build code hash.
 The installer reads the saved local certificate choice for future updates.
+
+## Sending boundary validation
+
+`SendOperationsTests` uses real synthetic SQLite and local files with controlled
+send-boundary outcomes. It covers exact existing direct/group GUIDs, alias
+lookup before exact selection, selected-source ambiguity, multiple handles,
+formatted explicit phone numbers, new individual recipients, validation of the
+whole file batch, ordering, rejected/unknown outcomes, cancellation, concurrent
+batch exclusion, and file rewrite/replacement/deletion after an earlier command.
+Read/find/alias preparation does not invoke the sender.
+
+`MessagesScriptingTests` compiles the production script against the installed
+public dictionary without executing it. It executes the shared routing body
+through `NSAppleScript` and actual Apple Event argument descriptors with inert
+boundary handlers. It checks Unicode/newlines/quotes, exact target selection,
+missing/ambiguous service routes, unknown dispatch failure and permission denial
+without execution. This proves the script/data boundary, not real Messages
+account lookup or sending. The independent MCP client additionally exercises
+structured arguments/results and records only synthetic dispatches:
+
+```sh
+swift build --product MCPTestServer
+.scratch/protocol-venv/bin/python Tests/Protocol/send_test.py
+```
+
+The native setup tests inject Automation status and requests into the actual
+AppKit controller, retain Contacts/FDA coverage, and distinguish setup from the
+read runtime. Production permission checks and requests run off the main actor;
+tests do not request system permission. Bundle property-list validation checks
+the Automation usage description and entitlement. Signing/install and genuine
+macOS authorization remain separate live gates.
+
+### Minimal live-send plan for the integration owner
+
+Do not execute this plan without Eric confirming each exact destination,
+service, text and file preview. Use a chosen test recipient and an existing test
+group; do not invent or infer either. The normal client must also approve the
+invocation. First verify an inert client rejection produces no dispatch and that
+drafting only prepares the preview. Root owns installation under the saved
+signing identity and the app-owned Automation consent prompt.
+
+Create two UTF-8 files in root's ignored `.scratch/live-send/`:
+
+- `one.txt`: `Messages Swift synthetic attachment one.` followed by one newline.
+- `two.txt`: `Messages Swift synthetic attachment two — café 🙂.` followed by one newline.
+
+Preview and confirm these separate cases:
+
+1. Existing direct chat: exact text `Messages Swift synthetic direct test — café 🙂.`
+   followed by a newline and `Second line: "quoted" text.`, then `one.txt` and
+   `two.txt` in that order. Check the returned ordered part statuses and inspect
+   Messages for the intended conversation, text and both file contents.
+2. Existing group: file-only `one.txt`, after previewing all current participants
+   and the group's actual service. Check exact group placement and file content.
+3. New individual recipient: text-only `Messages Swift synthetic new-recipient test.`
+   with an explicit selected service and exact handle. Check placement; no group
+   creation or service fallback is allowed.
+
+Repeat a route only after a new exact approval, never automatically after an
+unknown result. Verify available SMS/RCS routes separately before claiming them;
+a missing or ambiguous native route must return `messages_route_unavailable`.
+A command accepted by Messages is not delivered: report observed delivery
+separately, or leave it unconfirmed. Never force a network failure by changing
+account or security settings. Controlled partial/unknown failure tests remain
+synthetic. Keep the approved files unchanged until Messages finishes reading
+them: metadata checks between commands do not freeze a path after handoff, and
+this lane does not establish protection from that final mutation window.
+
+### Sending implementation result
+
+On Intel with Apple Swift 6.1.2, the complete suite passed 72 XCTest tests and
+43 Swift Testing tests. The independent Python MCP 1.26.0 client passed 15
+existing read/alias checks and six send checks. Disabling the batch-stop condition
+caused eight assertions in the no-retry test to fail; restoring it passed that
+test. Both packaging property lists passed `plutil -lint`, and the affected
+documentation graph had no broken links. The AppKit/runtime regression performed
+an actual synthetic `read_messages` call through its private socket with
+Automation denied and not requested. These results do not establish genuine
+Messages sending, OS consent, client confirmation behavior or delivery.
+
+### Combined sending and attachment validation
+
+The combined implementation passed 84 XCTest tests and 43 Swift Testing tests.
+The independent Python MCP 1.26.0 client passed 15 read/alias checks, six inert
+send checks and 25 attachment checks, including attachment retrieval through the
+Unix socket and stdio relay. Pillow 11.3.0 independently decoded returned images.
+Both packaging property lists passed validation. These synthetic results preserve
+the live consent, exact-preview confirmation, sending and client attachment
+consumption gates described above. Activity counts are not part of this build.

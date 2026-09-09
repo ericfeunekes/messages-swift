@@ -65,7 +65,7 @@ private actor RuntimeStatusSignal {
         }
     }
 
-    private let socket = UnixSocketServer()
+    private let socket: UnixSocketServer
     private let runtimeSignal = RuntimeStatusSignal()
     @MainActor struct Services {
         var authorization: () -> CNAuthorizationStatus = { CNContactStore.authorizationStatus(for: .contacts) }
@@ -74,6 +74,9 @@ private actor RuntimeStatusSignal {
             try CNContactStore().containers(matching: nil).map { ContactsSource(identifier: $0.identifier, name: $0.name, type: $0.type) }
         }
         var readAccess: (String) -> MessagesReadAccess = { MessagesReadAccess.check(path: $0) }
+        var automationAccess: @MainActor () async -> AutomationSetupAccess = { await AutomationSetupAccess.check() }
+        var requestAutomation: @MainActor () async -> AutomationSetupAccess = { await AutomationSetupAccess.request() }
+        var makeDirectory: @Sendable () -> any ContactsDirectorySource = { MacContactsDirectory() }
         var openURL: (URL) -> Void = { NSWorkspace.shared.open($0) }
         var revealApp: (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
         var presentWindow: @MainActor (NSWindow) -> Void = {
@@ -86,12 +89,13 @@ private actor RuntimeStatusSignal {
 
     override convenience init() {
         self.init(services: Services(), configurationPath: FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/messages-swift/config.json").path)
+            .appendingPathComponent("Library/Application Support/messages-swift/config.json").path, socket: UnixSocketServer())
     }
 
-    init(services: Services, configurationPath: String) {
+    init(services: Services, configurationPath: String, socket: UnixSocketServer = UnixSocketServer()) {
         self.services = services
         self.configurationPath = configurationPath
+        self.socket = socket
         super.init()
     }
     private var statusItem: NSStatusItem!
@@ -104,10 +108,17 @@ private actor RuntimeStatusSignal {
     private(set) var settingsMessage: NSTextField?
     private var contactsStatusLabel: NSTextField?
     private var messagesStatusLabel: NSTextField?
+    private var automationStatusLabel: NSTextField?
     private(set) var messagesAccess: MessagesReadAccess = .unavailable
+    private(set) var automationAccess: AutomationSetupAccess = .unavailable
     private var setupMessage = ""
+    private var automationMessage = ""
     private var sourceMessage = ""
     private(set) var requestingContacts = false
+    private(set) var requestingAutomation = false
+    private(set) var checkingAutomation = false
+    private var automationRevision = 0
+    private var presentsSetupAfterAutomationCheck = false
 
     private var contactsAccess: ContactsSetupAccess {
         switch services.authorization() {
@@ -125,6 +136,15 @@ private actor RuntimeStatusSignal {
         case .denied: "Access denied — enable Full Disk Access"
         case .missing: "Database file not found. Check the configured path."
         case .unavailable: "Database file could not be read. Check the path and file."
+        }
+    }
+
+    private var automationDescription: String {
+        switch automationAccess {
+        case .notRequested: "not requested"
+        case .denied: "denied — enable Automation for Messages"
+        case .granted: "granted"
+        case .unavailable: "could not be checked; open Messages, then Check Again"
         }
     }
 
@@ -155,6 +175,7 @@ private actor RuntimeStatusSignal {
         statusItem.menu = menu
         refreshSetupState()
         if status != .starting && status != .ready { showSettings() }
+        else { presentsSetupAfterAutomationCheck = true }
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -171,6 +192,7 @@ private actor RuntimeStatusSignal {
         let authorization = services.authorization()
         menu.addItem(NSMenuItem(title: "Contacts: \(contactsDescription(authorization))", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Messages: \(messagesDescription)", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Automation: \(automationDescription)", action: nil, keyEquivalent: ""))
         menu.addItem(item(title: "Set Up Permissions…", action: #selector(setUpPermissions)))
         menu.addItem(.separator())
         menu.addItem(item(title: "Settings…", action: #selector(showSettings)))
@@ -186,7 +208,13 @@ private actor RuntimeStatusSignal {
 
     @objc func setUpPermissions() {
         showSettings()
-        guard !requestingContacts else { return }
+        if !setUpContactsIfNeeded() { setUpAutomationIfNeeded() }
+    }
+
+    /// Returns true while the explicit Contacts request is pending. Automation is
+    /// requested only after that request completes, so macOS prompts do not race.
+    private func setUpContactsIfNeeded() -> Bool {
+        guard !requestingContacts else { return true }
         switch contactsAccess.action {
         case .request:
             requestingContacts = true
@@ -203,7 +231,9 @@ private actor RuntimeStatusSignal {
                 self.requestingContacts = false
                 self.refreshSetupState()
                 self.guideMessagesAccess()
+                self.setUpAutomationIfNeeded()
             }
+            return true
         case .settings:
             setupMessage = "Enable Messages Swift in Privacy & Security → Contacts, then click Check Again."
             openContactsSettings()
@@ -214,6 +244,45 @@ private actor RuntimeStatusSignal {
         case .none:
             refreshSetupState()
             guideMessagesAccess()
+        }
+        return false
+    }
+
+    private func setUpAutomationIfNeeded() {
+        guard !requestingAutomation else { return }
+        switch automationAccess.action {
+        case .request:
+            requestingAutomation = true
+            automationRevision += 1
+            automationMessage = "Respond to the macOS Automation request for Messages."
+            populateSettings()
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.automationAccess = await self.services.requestAutomation()
+                self.requestingAutomation = false
+                self.automationRevision += 1
+                switch self.automationAccess {
+                case .granted: self.automationMessage = ""
+                case .denied: self.automationMessage = "Enable Messages Swift in Privacy & Security → Automation, then click Check Again."
+                case .notRequested: self.automationMessage = "Automation permission was not granted. Click Set Up Permissions to try again."
+                case .unavailable: self.automationMessage = "Automation permission could not be checked. Open Messages, then click Check Again."
+                }
+                self.refreshMenu()
+                self.populateSettings()
+                if self.presentsSetupAfterAutomationCheck {
+                    self.presentsSetupAfterAutomationCheck = false
+                    if self.automationAccess != .granted { self.showSettings() }
+                }
+            }
+        case .settings:
+            automationMessage = "Enable Messages Swift in Privacy & Security → Automation, then click Check Again."
+            openAutomationSettings()
+            populateSettings()
+        case .explain:
+            automationMessage = "Automation permission could not be checked. Open Messages, then click Check Again."
+            populateSettings()
+        case .none:
+            break
         }
     }
 
@@ -228,12 +297,17 @@ private actor RuntimeStatusSignal {
 
     @objc func checkAgain() {
         setupMessage = ""
+        automationMessage = ""
         refreshSetupState()
         populateSettings()
     }
 
     @objc private func openContactsSettings() {
         services.openURL(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Contacts")!)
+    }
+
+    @objc private func openAutomationSettings() {
+        services.openURL(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!)
     }
 
     @objc func showSettings() {
@@ -243,27 +317,35 @@ private actor RuntimeStatusSignal {
             services.presentWindow(settingsWindow)
             return
         }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 430), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 480), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Messages Swift Settings"
         window.isReleasedWhenClosed = false
         window.delegate = self
         let content = NSView(frame: window.contentView!.bounds)
         content.autoresizingMask = [.width, .height]
         let contactsLabel = label("")
-        contactsLabel.frame = NSRect(x: 20, y: 377, width: 370, height: 24)
+        contactsLabel.frame = NSRect(x: 20, y: 427, width: 370, height: 24)
         contactsStatusLabel = contactsLabel
         content.addSubview(contactsLabel)
         let contactsButton = NSButton(title: "Contacts Settings…", target: self, action: #selector(openContactsSettings))
-        contactsButton.frame = NSRect(x: 390, y: 375, width: 170, height: 28)
+        contactsButton.frame = NSRect(x: 390, y: 425, width: 170, height: 28)
         content.addSubview(contactsButton)
         let messagesLabel = label("")
-        messagesLabel.frame = NSRect(x: 20, y: 317, width: 365, height: 48)
+        messagesLabel.frame = NSRect(x: 20, y: 367, width: 365, height: 48)
         messagesLabel.maximumNumberOfLines = 2
         messagesStatusLabel = messagesLabel
         content.addSubview(messagesLabel)
         let messagesButton = NSButton(title: "Full Disk Access…", target: self, action: #selector(openFullDiskAccessSettings))
-        messagesButton.frame = NSRect(x: 390, y: 325, width: 170, height: 28)
+        messagesButton.frame = NSRect(x: 390, y: 375, width: 170, height: 28)
         content.addSubview(messagesButton)
+        let automationLabel = label("")
+        automationLabel.frame = NSRect(x: 20, y: 317, width: 365, height: 40)
+        automationLabel.maximumNumberOfLines = 2
+        automationStatusLabel = automationLabel
+        content.addSubview(automationLabel)
+        let automationButton = NSButton(title: "Automation Settings…", target: self, action: #selector(openAutomationSettings))
+        automationButton.frame = NSRect(x: 390, y: 325, width: 170, height: 28)
+        content.addSubview(automationButton)
         let setup = NSButton(title: "Set Up Permissions", target: self, action: #selector(setUpPermissions))
         setup.frame = NSRect(x: 20, y: 275, width: 170, height: 28)
         content.addSubview(setup)
@@ -339,7 +421,11 @@ private actor RuntimeStatusSignal {
         let path = (try? RuntimeConfiguration.load(from: configurationPath).databasePath)
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Messages/chat.db").path
         messagesAccess = services.readAccess(path)
-        defer { updateSettingsStatus() }
+        defer { updateSettingsStatus(); refreshAutomationAccess() }
+        evaluateSetupState()
+    }
+
+    private func evaluateSetupState() {
         guard services.authorization() == .authorized else { status = .contactsRequired; refreshMenu(); return }
         refreshSources()
         guard let configuration = try? RuntimeConfiguration.load(from: configurationPath),
@@ -352,6 +438,25 @@ private actor RuntimeStatusSignal {
         if runtime != nil && status != .ready && status != .starting { status = .restartRequired }
         startRuntimeIfConfigured()
         refreshMenu()
+    }
+
+    private func refreshAutomationAccess() {
+        guard !checkingAutomation, !requestingAutomation else { return }
+        checkingAutomation = true
+        let revision = automationRevision
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let access = await self.services.automationAccess()
+            self.checkingAutomation = false
+            guard revision == self.automationRevision, !self.requestingAutomation else { return }
+            self.automationAccess = access
+            self.evaluateSetupState()
+            self.populateSettings()
+            if self.presentsSetupAfterAutomationCheck {
+                self.presentsSetupAfterAutomationCheck = false
+                if self.automationAccess != .granted { self.showSettings() }
+            }
+        }
     }
 
     private func refreshSources() {
@@ -379,7 +484,8 @@ private actor RuntimeStatusSignal {
     private func updateSettingsStatus() {
         contactsStatusLabel?.stringValue = "Contacts: \(contactsDescription(services.authorization()))"
         messagesStatusLabel?.stringValue = "Messages: \(messagesDescription)"
-        var messages = [setupMessage, sourceMessage]
+        automationStatusLabel?.stringValue = "Automation: \(automationDescription)"
+        var messages = [setupMessage, automationMessage, sourceMessage]
         if contactsAccess.action != .none { messages.append("Contacts access is required to list sources.") }
         else if sources.isEmpty { messages.append("No Contacts sources are available.") }
         if status == .restartRequired || status == .failed { messages.append("Quit and reopen Messages Swift after correcting setup. The existing runtime cannot be restarted here.") }
@@ -391,6 +497,7 @@ private actor RuntimeStatusSignal {
         guard runtime == nil, let configuration = try? RuntimeConfiguration.load(from: configurationPath) else { return }
         status = .starting
         let signal = runtimeSignal
+        let makeDirectory = services.makeDirectory
         statusWatcher = Task { @MainActor [weak self, signal] in
             for await event in await signal.events() {
                 switch event {
@@ -401,7 +508,8 @@ private actor RuntimeStatusSignal {
         }
         runtime = Task { [socket, signal] in
             do {
-                try await ApplicationRuntime.run(configuration: configuration, directory: MacContactsDirectory(), runner: { operations in
+                let directory = makeDirectory()
+                try await ApplicationRuntime.run(configuration: configuration, directory: directory, runner: { operations in
                     try socket.start(operations: operations)
                     await signal.report(.ready)
                     try await socket.waitUntilStopped()
@@ -435,7 +543,8 @@ private actor RuntimeStatusSignal {
         }
     }
 
-    @objc private func quit() { statusWatcher?.cancel(); runtime?.cancel(); socket.stop(); NSApp.terminate(nil) }
+    func stopRuntime() { statusWatcher?.cancel(); runtime?.cancel(); socket.stop() }
+    @objc private func quit() { stopRuntime(); NSApp.terminate(nil) }
 
     @objc private func openFullDiskAccessSettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") else { return }

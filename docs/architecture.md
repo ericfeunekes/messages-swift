@@ -98,15 +98,18 @@ consistently. Otherwise it reads the local certificate choice from
 `~/Library/Application Support/messages-swift/signing-identity`; if neither is
 configured it uses ad-hoc signing whose identity changes with the build. The
 local identity file contains only a certificate identifier, never a password. Quit the app
-before updating. The app has its own Contacts usage declaration and entitlement;
+before updating. The app has its own Contacts and Automation usage declarations and entitlements;
 macOS still requires the user's permission. Signing does not grant access.
 Launch the app normally through Finder or `open`; invoking its nested executable
 from Codex does not establish an independent permission identity on the tested Mac.
 
-Settings shows Contacts permission and Messages database readability together.
+Settings shows Contacts and Automation permission alongside Messages database readability.
 The window opens on launch when required access or a source selection is missing.
-Choose Set Up Permissions to request Contacts access through the native async API
-and open the appropriate System Settings pane for missing access. Full Disk
+Choose Set Up Permissions to request Contacts access through the native async API,
+then Automation access through the public Apple Events permission API. Permission
+checks and requests that can block run off the main actor. Missing Automation
+permission blocks sending, while the existing read runtime remains available.
+Setup opens the appropriate System Settings pane for missing access. Full Disk
 Access requires a manual user grant: the app opens that pane and reveals itself
 in Finder so it can be added if absent. The file check reports readability,
 permission denial, missing files or other failures; it does not assert a global
@@ -201,3 +204,25 @@ pathname. SQLite's HAS_MOVED result is checked before/after each read; errors fa
 closed. Normal WAL access keeps the original SQLite pathname. An app restart creates a new store and rejects old cursors, even if pointed at the same file; reconnecting an MCP client to the same running app preserves the store identity. GUID aliases remain durable.
 This is append-stable continuation, not a historical snapshot through edits,
 deletions or membership changes.
+
+## Send execution
+
+`MessagesOperations.sendMessage` resolves the selected Contacts source and exact
+destination, validates the complete local-file batch and dispatches text followed
+by files through `MessagesSending`. The shared actor rejects overlapping send
+batches while allowing read operations during the asynchronous scripting call.
+The [schema](schemas.md#sending) owns the per-part and aggregate outcomes.
+
+`MessagesScriptingSender` executes fixed public AppleScript handlers in-process
+using `NSAppleScript` and Apple Event string arguments. User text, paths, handles
+and IDs never become executable source. Blocking permission checks and script
+execution run off the main actor. A nonprompting public Automation check gates
+execution; setup owns the user permission request. Exact chat lookup and explicit
+individual service selection precede the send command. Errors after dispatch
+begins are conservatively unknown and never retried.
+
+The adapter returns no message ID or delivery claim because the scripting send
+reply does not prove either. File metadata checks catch changes between ordered
+commands; they do not make multiple sends atomic or freeze files once Messages
+receives their paths. No receipt store, consent boolean or server approval broker
+is involved. Drafting stays entirely in the agent/client guidance.

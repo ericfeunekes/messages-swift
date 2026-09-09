@@ -12,7 +12,7 @@ This is the register of unresolved requirements and design choices. It separates
 
 - **First release:** reading and sending together; selected by the owner.
 - **New groups:** existing groups first; selected by the owner. Creation of new groups is outside the first release. New direct recipients and existing-group sending have distinct paths and must not be classified together.
-- **Files:** text and local attachments are part of the intended send operation. The atomicity and partial-outcome contract for multiple files require an implementation decision and proof.
+- **Files:** text and local attachments are part of the intended send operation. Text precedes files in input order as separate commands, stopping at the first failure or unknown outcome. The local [send schema](schemas.md#sending) reports each part and never claims atomicity or delivery. File changes across commands stop remaining dispatch; a path is not frozen after Messages receives it.
 
 ## Directory and cache
 

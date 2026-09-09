@@ -8,7 +8,7 @@ public enum MCPServerRunner {
     }
 
     public static func run(operations: MessagesOperations, transport: any Transport) async throws {
-        let server = Server(name: "messages-swift", version: "0.1.0", instructions: "Read and search local Messages with selected Contacts names, local aliases and message-bound images/files. Ambiguous contacts require a choice. Decoding diagnostics mean search coverage is incomplete. Attachment tools return bounded image views or complete original file bytes; errors do not deliver a file. Never interpret a cached label as a send destination.", capabilities: .init(tools: .init()))
+        let server = Server(name: "messages-swift", version: "0.1.0", instructions: "Read and search local Messages with selected Contacts names, local aliases and message-bound images/files. Ambiguous contacts require a choice. Drafting never calls send_message. Before every send, even an initial request saying send, show the resolved recipients, service, exact text and files and obtain confirmation. An unchanged confirmed preview needs no second conversational confirmation; any change requires a revised preview. The client approves the invocation. Never retry an uncertain or partial send automatically. Accepted means accepted by Messages, not delivered. Attachment tools return bounded image views or complete original file bytes; errors do not deliver a file. Decoding diagnostics mean search coverage is incomplete. Never interpret a cached label as a send destination.", capabilities: .init(tools: .init()))
         let tools = ToolSchemas.tools
         await server.withMethodHandler(ListTools.self) { _ in .init(tools: tools) }
         await server.withMethodHandler(CallTool.self) { params in
@@ -27,6 +27,7 @@ public enum MCPServerRunner {
                 fields["participants"] = fields["participants"] ?? .array([])
                 fields["membership"] = fields["membership"] ?? "contains_all"
             }
+            if params.name == "send_message" { fields["files"] = fields["files"] ?? .array([]) }
             let data = try JSONEncoder().encode(Value.object(fields))
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .custom { decoder in
@@ -46,6 +47,8 @@ public enum MCPServerRunner {
                     return try encodeAttachment(await operations.readImage(decoder.decode(ReadAttachmentInput.self, from: data)), image: true)
                 case "read_attachment":
                     return try encodeAttachment(await operations.readAttachment(decoder.decode(ReadAttachmentInput.self, from: data)), image: false)
+                case "send_message":
+                    return try encode(await operations.sendMessage(decoder.decode(SendMessageInput.self, from: data)))
                 case "find_chats":
                     return try encode(await operations.findChats(decoder.decode(FindChatsInput.self, from: data)))
                 case "read_messages":
@@ -104,6 +107,7 @@ public enum MCPServerRunner {
     private static func domainCode(_ error: Error) -> String {
         // Each domain owns its errors; never emit raw errors containing paths or private values.
         if let error = error as? AttachmentReadError { return error.rawValue }
+        if let error = error as? SendValidationError { return error.rawValue }
         if let error = error as? ContactsDirectoryError {
             switch error {
             case .permissionNotGranted: return "contacts_permission_not_granted"

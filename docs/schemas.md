@@ -13,6 +13,7 @@ exclusive. Limits default to 50 and range from 1 through 100.
 | `find_chats` | Optional `query`; `participants` defaults to `[]`; `membership` defaults to `contains_all`; `dateRange` defaults to `{}`; `unreadOnly` defaults to `false`; `limit`; optional `cursor` |
 | `read_messages` | Required `chatID`; `dateRange`, `unreadOnly`, `limit`, optional `cursor` |
 | `search_messages` | Required nonempty `query`; optional `chatID`; `participants`, `membership`, `dateRange`, `unreadOnly`, `limit`, optional `cursor` |
+| `send_message` | Exactly one of `chatID` or `recipients` (one participant selector); `service` required only with recipients (`iMessage`, `SMS`, `RCS`); optional nonempty `text`; `files` defaults to `[]` (absolute local file paths); text or files required |
 | `set_chat_alias` | Required `chatID` and `alias`; string sets/replaces this chat's alias, null removes it |
 | `read_image` | Required nonempty `messageID` and `attachmentID` from history/search; no path or rendering options |
 | `read_attachment` | Required nonempty `messageID` and `attachmentID` from history/search; no path |
@@ -79,7 +80,7 @@ is separate from this candidate lookup.
 MCP returns structured JSON plus equivalent text. Invalid invocations use JSON-RPC
 invalid-params errors; expected operation failures use `isError: true` and an
 `error` object with a stable `code`; alias collisions also return conflicting `chatIDs`. Alias writes change only local metadata.
-Sending and activity counts remain separate first-release operations.
+Activity counts remain a separate first-release operation.
 
 Malformed cursor encodings return `invalid_cursor`; a valid cursor with changed
 filters, search mode, or owning connection returns `cursor_mismatch`. SQLite's
@@ -130,3 +131,48 @@ native image encode/decode fixtures, and an independent MCP client that checks
 returned bytes and MIME. Cases cover association mismatch, connection-scoped IDs,
 missing files, symlinks and nonregular files, unsupported and malformed images,
 image resizing/frame selection, file MIME handling and exact size boundaries.
+## Sending
+
+`chatID` selects an exact existing direct or group GUID and forbids a service
+override. Resolve names and aliases through `find_chats`, then preview the chosen
+chat's participants and service before sending. A label is never a chat ID.
+`recipients` contains exactly one selector for an individual, including a new
+individual. It requires an explicit service in the confirmed preview. Multiple
+recipients do not create a new group. An explicit full phone number or email
+selects that handle without expanding to other addresses on its contact. A name
+or source identity with multiple handles returns choices. Names resolve only
+against the selected Contacts source; duplicate names remain separate candidates.
+
+The result has `status`, `delivery: "unconfirmed"`, optional `destination`,
+`contactCandidates`, `handleCandidates`, `parts` and optional `errorCode`.
+`destination` reports an optional `chatID`, service and recipients. A
+`needs_choice` result sends nothing; choose the contact/handle and obtain a revised
+preview confirmation. Validation failures use the normal error envelope with
+`invalid_send_destination`, `invalid_send_content` or `invalid_send_file`.
+
+Each part has its zero-based `index`, `kind` (`text` or `file`), optional
+zero-based `fileIndex`, `outcome` and optional stable `errorCode`. Text precedes
+files in their supplied order. Outcomes are `accepted`, `rejected`, `unknown` or
+`not_attempted`. Sending stops at the first rejection or unknown outcome; later
+parts remain `not_attempted`. Overall status is `accepted` only when every part
+is accepted, `partial` when some are accepted before a known failure, `unknown`
+when any dispatch is uncertain, and `rejected` when none are accepted and none
+are uncertain. Unknown takes precedence even after earlier accepted parts.
+`accepted` means Messages accepted the command, never confirmed delivery.
+Concurrent batches return `send_in_progress` without dispatch; no automatic
+retry, duplicate send, new-group creation or service switching occurs.
+
+All files must be readable regular files before the first command. Relative
+paths, final-component symlinks, directories, missing files and NUL strings are
+rejected. File identity, size and modification/change times are checked again
+before each command, catching changes across earlier awaited sends. A changed
+file stops the batch with `send_file_changed`. This does not freeze a path after
+handoff to Messages or verify what Messages later reads. Keep approved files
+unchanged until Messages finishes processing them.
+
+The public scripting adapter requires Automation permission already granted by
+the setup UI. It does not prompt on a send. Existing chats use the exact scripting
+chat ID with no recipient fallback. Individual routing requires exactly one
+enabled account of the requested service; an unavailable or ambiguous route is
+reported as a rejected part with `messages_route_unavailable`. A dictionary service name does not establish that this Mac can send
+through that service. Genuine service/target behavior remains a live test gate.

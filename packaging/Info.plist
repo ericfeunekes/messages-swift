@@ -22,5 +22,7 @@
     <true/>
     <key>NSContactsUsageDescription</key>
     <string>Messages Swift uses the Contacts source you select to show Messages conversations with readable names.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Messages Swift sends approved messages and files through Messages.</string>
 </dict>
 </plist>

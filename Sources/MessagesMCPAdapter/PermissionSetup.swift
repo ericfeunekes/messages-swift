@@ -1,3 +1,4 @@
+import ApplicationServices
 import Darwin
 import Foundation
 
@@ -36,6 +37,57 @@ public enum ContactsSetupAccess: Sendable {
         case .denied: .settings
         case .restricted, .unavailable: .explain
         case .granted: .none
+        }
+    }
+}
+
+/// The app's public Apple Events permission to control Messages. This reports the
+/// Automation boundary only; it does not establish that a message was sent.
+public enum AutomationSetupAccess: Equatable, Sendable {
+    case notRequested, denied, granted, unavailable
+
+    public enum Action: Equatable, Sendable { case request, settings, explain, none }
+    public var action: Action {
+        switch self {
+        case .notRequested: .request
+        case .denied: .settings
+        case .unavailable: .explain
+        case .granted: .none
+        }
+    }
+
+    /// Checks without presenting an Automation prompt.
+    public static func check() async -> Self {
+        await Task.detached(priority: .userInitiated) {
+            determine(askUserIfNeeded: false)
+        }.value
+    }
+
+    /// May present the system Automation prompt. Keep its public Apple Events
+    /// call off the AppKit main actor because Apple documents it can block.
+    public static func request() async -> Self {
+        await Task.detached(priority: .userInitiated) {
+            determine(askUserIfNeeded: true)
+        }.value
+    }
+
+    private static func determine(askUserIfNeeded: Bool) -> Self {
+        var target = AEAddressDesc()
+        let createStatus = "com.apple.MobileSMS".withCString { identifier in
+            AECreateDesc(DescType(typeApplicationBundleID), identifier, Int(strlen(identifier)), &target)
+        }
+        guard createStatus == noErr else { return .unavailable }
+        defer { AEDisposeDesc(&target) }
+
+        return classify(status: AEDeterminePermissionToAutomateTarget(&target, AEEventClass(typeWildCard), AEEventID(typeWildCard), askUserIfNeeded))
+    }
+
+    static func classify(status: OSStatus) -> Self {
+        switch status {
+        case noErr: .granted
+        case OSStatus(errAEEventWouldRequireUserConsent): .notRequested
+        case OSStatus(errAEEventNotPermitted): .denied
+        default: .unavailable
         }
     }
 }

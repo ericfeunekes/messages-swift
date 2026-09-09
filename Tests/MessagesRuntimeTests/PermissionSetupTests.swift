@@ -1,3 +1,4 @@
+import ApplicationServices
 import Darwin
 import Foundation
 import Testing
@@ -35,4 +36,15 @@ import Testing
     #expect(ContactsSetupAccess.restricted.action == .explain)
     #expect(ContactsSetupAccess.unavailable.action == .explain)
     #expect(ContactsSetupAccess.granted.action == .none)
+}
+
+@Test func automationPermissionActionsAndStatusesRespectSystemState() {
+    #expect(AutomationSetupAccess.notRequested.action == .request)
+    #expect(AutomationSetupAccess.denied.action == .settings)
+    #expect(AutomationSetupAccess.unavailable.action == .explain)
+    #expect(AutomationSetupAccess.granted.action == .none)
+    #expect(AutomationSetupAccess.classify(status: noErr) == .granted)
+    #expect(AutomationSetupAccess.classify(status: OSStatus(errAEEventWouldRequireUserConsent)) == .notRequested)
+    #expect(AutomationSetupAccess.classify(status: OSStatus(errAEEventNotPermitted)) == .denied)
+    #expect(AutomationSetupAccess.classify(status: -1) == .unavailable)
 }

@@ -6,12 +6,117 @@ public actor MessagesOperations {
     private let directory: any ContactsDirectorySource
     private let binding: ContactsContainerBinding
     private let state: LocalState
+    private let sender: any MessagesSending
+    private var sendInProgress = false
 
-    public init(store: MessageStore, directory: any ContactsDirectorySource, binding: ContactsContainerBinding, state: LocalState) {
+    public init(store: MessageStore, directory: any ContactsDirectorySource, binding: ContactsContainerBinding, state: LocalState, sender: any MessagesSending = MessagesScriptingSender()) {
         self.store = store
         self.directory = directory
         self.binding = binding
         self.state = state
+        self.sender = sender
+    }
+
+    public func sendMessage(_ input: SendMessageInput, now: Date = Date()) async throws -> SendMessageResult {
+        guard (input.chatID == nil) != (input.recipients == nil),
+              input.chatID.map({ !$0.isEmpty && !$0.utf8.contains(0) }) ?? true else { throw SendValidationError.invalidDestination }
+        guard input.text != nil || !input.files.isEmpty,
+              input.text.map({ !$0.isEmpty && !$0.utf8.contains(0) }) ?? true else { throw SendValidationError.invalidContent }
+        var parts: [SendPartResult] = []
+        if input.text != nil { parts.append(.init(index: 0, kind: "text", fileIndex: nil, outcome: .notAttempted)) }
+        for index in input.files.indices { parts.append(.init(index: parts.count, kind: "file", fileIndex: index, outcome: .notAttempted)) }
+        // Validate the whole batch before any command can leave this process.
+        let files = try input.files.map { try OutgoingFile(path: $0) }
+        let people = try preparedPeople(now: now)
+        let target: SendTarget
+        let destination: SendDestination
+        if let chatID = input.chatID {
+            guard input.service == nil else { throw SendValidationError.invalidDestination }
+            guard let chat = try store.chat(id: ChatID(rawValue: chatID)) else { throw OperationError.unknownChat(chatID) }
+            target = .chat(chatID)
+            destination = .init(chatID: chatID, service: chat.service, recipients: enrich(chat, people: people).participants)
+            try cacheUsed(people, handles: chat.participants, now: now)
+        } else {
+            guard let recipients = input.recipients, recipients.count == 1,
+                  let service = input.service, ["iMessage", "SMS", "RCS"].contains(service) else { throw SendValidationError.invalidDestination }
+            let selector = recipients[0]
+            guard (selector.query == nil) != (selector.sourceIdentity == nil) else { throw SendValidationError.invalidDestination }
+            let handles: [String]
+            let candidates: [ContactCandidate]
+            if let query = selector.query, Self.isExplicitSendHandle(query) {
+                // Explicit handles never expand to another address on the contact.
+                handles = [normalize(query)]
+                candidates = []
+            } else {
+                let found: [ContactPerson]
+                if let identity = selector.sourceIdentity { found = people.filter { $0.identity == identity } }
+                else {
+                    guard let query = selector.query, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw SendValidationError.invalidDestination }
+                    found = people.filter { personMatches($0, query: query) }
+                }
+                guard !found.isEmpty else { throw OperationError.contactNotFound }
+                candidates = found.count > 1 ? found.map { ContactCandidate(person: $0) } : []
+                handles = found.count == 1 ? Array(Set(found[0].handles.map(normalize))).sorted() : []
+            }
+            if !candidates.isEmpty || handles.count != 1 {
+                return .init(status: .needsChoice, delivery: "unconfirmed", destination: nil,
+                             contactCandidates: candidates, handleCandidates: handles, parts: parts)
+            }
+            guard let handle = handles.first, Self.isExplicitSendHandle(handle) else { throw SendValidationError.invalidDestination }
+            target = .individual(handle: handle, service: service)
+            destination = .init(chatID: nil, service: service, recipients: [participant(handle, people: people)!])
+            try cacheUsed(people, handles: [handle], now: now)
+        }
+        var result = SendMessageResult(status: .rejected, delivery: "unconfirmed", destination: destination,
+                                       contactCandidates: [], handleCandidates: [], parts: parts)
+        // Actor reentrancy must not interleave two multi-part batches.
+        guard !sendInProgress else { result.errorCode = "send_in_progress"; return result }
+        sendInProgress = true
+        defer { sendInProgress = false }
+        for index in result.parts.indices {
+            if Task.isCancelled {
+                result.errorCode = "send_cancelled"
+                break
+            }
+            guard files.allSatisfy({ $0.isUnchanged() }) else {
+                result.parts[index].outcome = .rejected
+                result.parts[index].errorCode = "send_file_changed"
+                break
+            }
+            let payload: SendPayload
+            if let fileIndex = result.parts[index].fileIndex { payload = .file(input.files[fileIndex]) }
+            else { payload = .text(input.text!) }
+            let outcome = await sender.send(target: target, payload: payload)
+            switch outcome {
+            case .accepted: result.parts[index].outcome = .accepted
+            case .unavailable:
+                result.parts[index].outcome = .rejected
+                result.parts[index].errorCode = "messages_route_unavailable"
+            case .rejected:
+                result.parts[index].outcome = .rejected
+                result.parts[index].errorCode = "messages_rejected"
+            case .unknown:
+                result.parts[index].outcome = .unknown
+                result.parts[index].errorCode = "messages_outcome_unknown"
+            }
+            if outcome != .accepted { break }
+        }
+        if result.parts.contains(where: { $0.outcome == .unknown }) { result.status = .unknown }
+        else if result.parts.allSatisfy({ $0.outcome == .accepted }) { result.status = .accepted }
+        else if result.parts.contains(where: { $0.outcome == .accepted }) { result.status = .partial }
+        return result
+    }
+
+    private static func isExplicitSendHandle(_ value: String) -> Bool {
+        guard !value.isEmpty, !value.utf8.contains(0) else { return false }
+        if value.contains("@") {
+            let parts = value.split(separator: "@", omittingEmptySubsequences: false)
+            return !value.contains(where: { $0.isWhitespace }) && parts.count == 2 && parts.allSatisfy { !$0.isEmpty }
+        }
+        let phone = value.trimmingCharacters(in: .whitespaces)
+        let body = phone.hasPrefix("+") ? phone.dropFirst() : phone[...]
+        return body.filter({ $0.isASCII && $0.isNumber }).count >= 7 &&
+            body.allSatisfy { ($0.isASCII && $0.isNumber) || " ()-.".contains($0) }
     }
 
     public func refreshDueContacts(now: Date = Date()) throws {

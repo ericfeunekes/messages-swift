@@ -42,4 +42,5 @@ struct WatchCursor: Codable, Sendable {
 struct WatchBatch: Sendable {
     let cursor: WatchCursor
     let records: [MessageRecord]
+    let scannedAssociationCount: Int
 }

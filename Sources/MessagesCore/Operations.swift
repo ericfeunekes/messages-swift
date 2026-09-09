@@ -206,11 +206,13 @@ public actor MessagesOperations {
         let deadline = clock.now.advanced(by: .seconds(input.waitSeconds))
         var cursor: WatchCursor? = try decodeCursor(input.cursor)
         var records: [MessageRecord] = []
+        var scannedAssociationCount = 0
         repeat {
             try Task.checkCancellation()
             let batch = try store.watchBatch(chatID: input.chatID, cursor: cursor, limit: input.limit)
             cursor = batch.cursor
             records = batch.records
+            scannedAssociationCount += batch.scannedAssociationCount
             if !records.isEmpty || clock.now >= deadline { break }
             try await clock.sleep(until: min(deadline, clock.now.advanced(by: .milliseconds(100))))
         } while true
@@ -224,7 +226,7 @@ public actor MessagesOperations {
             messages: records.compactMap { message($0, people: lookup.people, unresolvedHandles: lookup.unresolvedHandles) },
             events: records.compactMap { event($0, people: lookup.people, unresolvedHandles: lookup.unresolvedHandles) },
             decodingDiagnostics: failures.prefix(10).map { DecodingDiagnostic(messageID: $0.id.rawValue, chatID: $0.chatID.rawValue, reason: "body decoding failed") },
-            decodingFailureCount: failures.count, scannedAssociationCount: records.count,
+            decodingFailureCount: failures.count, scannedAssociationCount: scannedAssociationCount,
             unresolvedContactHandles: lookup.unresolvedHandles.sorted(), contactCandidates: contactCandidates(lookup), nextCursor: nil)
         return WatchMessagesResult(status: records.isEmpty ? "no_match" : "messages", cursor: try encodeCursor(cursor)!, page: page)
     }

@@ -40,10 +40,32 @@ final class WatchTests: XCTestCase {
         XCTAssertEqual(first.status, "messages")
         XCTAssertEqual(first.page.messages.map(\.id), ["m1"])
         XCTAssertEqual(first.page.events.map(\.id), ["m3"])
-        XCTAssertEqual(first.page.scannedAssociationCount, 2)
+        XCTAssertEqual(first.page.scannedAssociationCount, 3)
         let second = try await operations.watchMessages(.init(chatID: "watch-chat", waitSeconds: 0, limit: 2, cursor: first.cursor))
         XCTAssertEqual(second.page.messages.map(\.id), ["m4", "m5"])
         XCTAssertEqual(second.page.scannedAssociationCount, 2)
+    }
+
+    func testScannedAssociationsAccumulateAcrossPollsIncludingUnmatchedRows() async throws {
+        let fixture = try WatchFixture()
+        let operations = try fixture.operations()
+        let initial = try await operations.watchMessages(.init(chatID: "watch-chat", waitSeconds: 0))
+        XCTAssertEqual(initial.page.scannedAssociationCount, 0)
+        for id in 1...257 {
+            try fixture.add(id: id, text: "excluded", chat: id.isMultiple(of: 2) ? 1 : 2, fromMe: id.isMultiple(of: 2))
+        }
+        try fixture.add(id: 258, text: "incoming")
+        let matched = try await operations.watchMessages(.init(chatID: "watch-chat", waitSeconds: 1, limit: 1, cursor: initial.cursor))
+        XCTAssertEqual(matched.page.messages.map(\.id), ["m258"])
+        XCTAssertEqual(matched.page.scannedAssociationCount, 258)
+        for id in 259...515 {
+            try fixture.add(id: id, text: "excluded", chat: id.isMultiple(of: 2) ? 1 : 2, fromMe: id.isMultiple(of: 2))
+        }
+        let timeout = try await operations.watchMessages(.init(chatID: "watch-chat", waitSeconds: 1, cursor: matched.cursor))
+        XCTAssertEqual(timeout.status, "no_match")
+        XCTAssertEqual(timeout.page.scannedAssociationCount, 257)
+        let resumed = try await operations.watchMessages(.init(chatID: "watch-chat", waitSeconds: 0, cursor: timeout.cursor))
+        XCTAssertEqual(resumed.page.scannedAssociationCount, 0)
     }
 
     func testDelayedJoinAndBackdatedArrivalAppearAfterConsumedPosition() async throws {

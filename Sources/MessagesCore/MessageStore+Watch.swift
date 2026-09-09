@@ -32,7 +32,7 @@ extension MessageStore {
                     guard !latest.isNull(at: 5) else { throw WatchError.positionInvalidated }
                     baseline = try anchor(latest)
                 }
-                return WatchBatch(cursor: WatchCursor(generation: generation, chatID: chatID, anchor: baseline), records: [])
+                return WatchBatch(cursor: WatchCursor(generation: generation, chatID: chatID, anchor: baseline), records: [], scannedAssociationCount: 0)
             }
             let statement = try SQLiteStatement(database, """
                 SELECT \(messageSelect(schema: schema)), cmj.ROWID, cmj.message_id
@@ -42,9 +42,11 @@ extension MessageStore {
             defer { statement.finalize() }
             try statement.bind([.integer(position.anchor?.row ?? 0)])
             var records: [MessageRecord] = []
+            var scannedAssociationCount = 0
             while try statement.step() {
                 try Task.checkCancellation()
                 guard !statement.isNull(at: 0), let currentChat = statement.text(at: 2) else { throw WatchError.positionInvalidated }
+                scannedAssociationCount += 1
                 position.anchor = WatchAnchor(row: statement.integer(at: 19), messageRow: statement.integer(at: 20),
                                               chatRow: statement.integer(at: 1), messageGUID: statement.text(at: 3), chatGUID: currentChat)
                 if currentChat == chatID && !statement.isNull(at: 7) && statement.integer(at: 7) == 0 {
@@ -52,7 +54,7 @@ extension MessageStore {
                     if records.count == limit { break }
                 }
             }
-            return WatchBatch(cursor: position, records: records)
+            return WatchBatch(cursor: position, records: records, scannedAssociationCount: scannedAssociationCount)
         }
     }
 }

@@ -38,6 +38,15 @@ final class MessagesScriptingTests: XCTestCase {
         XCTAssertEqual(result, .unknown)
     }
 
+    func testRouteLookupErrorAfterDispatchIsUnknownForBothDirectServices() async {
+        let source = failingDispatchSource.replacingOccurrences(of: "error number -10000", with: "error number -1728")
+        let sender = MessagesScriptingSender(permission: { true }, executor: AppleScriptExecutor(source: source))
+        for service in ["SMS", "iMessage"] {
+            let result = await sender.send(target: .individual(handle: "+15550009999", service: service), payload: .text("synthetic"))
+            XCTAssertEqual(result, .unknown, "A dispatch error must not authorize another route")
+        }
+    }
+
     func testNonpromptingPermissionFailureRejectsWithoutExecutingScript() async {
         let sender = MessagesScriptingSender(permission: { false }, executor: CountingExecutor())
         let result = await sender.send(target: .chat("chat-guid-1"), payload: .text("x"))

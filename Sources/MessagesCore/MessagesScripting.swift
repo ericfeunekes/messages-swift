@@ -20,11 +20,16 @@ public enum SendPayload: Sendable, Equatable {
 public enum SendDispatchOutcome: String, Codable, Sendable {
     case accepted
     case rejected
-    /// No exact chat or uniquely enabled requested service route was available.
+    /// No exact chat or uniquely enabled requested service route was available,
+    /// and dispatch has not started. Callers may try another route. Once dispatch
+    /// starts, a route error must be reported as unknown instead.
     case unavailable
     case unknown
 }
 
+/// Implementations must preserve SendDispatchOutcome timing semantics. In
+/// particular, unavailable guarantees that no dispatch was attempted; a failed
+/// or interrupted dispatch whose effects are uncertain must return unknown.
 public protocol MessagesSending: Sendable {
     func send(target: SendTarget, payload: SendPayload) async -> SendDispatchOutcome
 }

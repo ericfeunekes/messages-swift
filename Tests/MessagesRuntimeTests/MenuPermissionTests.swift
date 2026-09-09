@@ -16,8 +16,10 @@ import MessagesMCPAdapter
         var authorization: CNAuthorizationStatus = .notDetermined
         var readAccess: MessagesReadAccess = .denied
         var automationAccess: AutomationSetupAccess = .unavailable
+        var accessibilityAccess: AccessibilitySetupAccess = .denied
         var requests = 0
         var automationRequests = 0
+        var accessibilityRequests = 0
         var urls: [URL] = []
         var revealed: [URL] = []
         var presentations = 0
@@ -80,6 +82,11 @@ import MessagesMCPAdapter
             services.requestAutomation = {
                 self.automationRequests += 1
                 return await withCheckedContinuation { self.automationContinuation = $0 }
+            }
+            services.accessibilityAccess = { self.accessibilityAccess }
+            services.requestAccessibility = {
+                self.accessibilityRequests += 1
+                return self.accessibilityAccess
             }
             services.openURL = { self.urls.append($0) }
             services.revealApp = { self.revealed.append($0) }
@@ -174,9 +181,11 @@ import MessagesMCPAdapter
         #expect(fixture.checkedPaths.allSatisfy { $0 == defaultPath })
         #expect(fields.contains(where: { $0.contains("Messages: Access denied") }))
         #expect(fields.contains(where: { $0.contains("Automation: could not be checked") }))
+        #expect(fields.contains("Accessibility: not granted — enable Accessibility for Messages Swift"))
         #expect(buttons.contains("Set Up Permissions"))
         #expect(buttons.contains("Full Disk Access…"))
         #expect(fixture.requests == 0)
+        #expect(fixture.accessibilityRequests == 0)
         #expect(fixture.urls.isEmpty)
         fixture.authorization = .denied
         fixture.readAccess = .missing
@@ -189,6 +198,19 @@ import MessagesMCPAdapter
         #expect(fixture.presentations == 1)
         #expect(fixture.requests == 0)
         #expect(fixture.urls.isEmpty)
+    }
+
+    @Test func accessibilityRowFitsThePermissionWindow() throws {
+        let fixture = try Fixture()
+        let app = fixture.app()
+        defer { fixture.clean(app) }
+        app.showSettings()
+        let views = try #require(app.settingsWindow?.contentView?.subviews)
+        for (index, view) in views.enumerated() {
+            for other in views.dropFirst(index + 1) {
+                #expect(!view.frame.intersects(other.frame))
+            }
+        }
     }
 
     @Test func automationPermissionIsRequestedOnceAndCompletesFromAnInertInjectedBoundary() async throws {
@@ -252,10 +274,33 @@ import MessagesMCPAdapter
         app.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
         await waitForAutomationCheck(app)
         #expect(fixture.automationRequests == 0)
+        #expect(fixture.accessibilityRequests == 0)
         #expect(app.automationAccess == .notRequested)
         #expect(fixture.urls.isEmpty)
         let fields = app.settingsWindow!.contentView!.subviews.compactMap { $0 as? NSTextField }.map(\.stringValue)
         #expect(fields.contains("Automation: not requested"))
+        #expect(fields.contains("Accessibility: not granted — enable Accessibility for Messages Swift"))
+    }
+
+    @Test func accessibilityPermissionRequestsOnceThenRefreshesGrantedTrust() async throws {
+        let fixture = try Fixture()
+        fixture.authorization = .authorized
+        fixture.readAccess = .readable
+        fixture.automationAccess = .granted
+        let app = fixture.app()
+        defer { fixture.clean(app) }
+        app.showSettings()
+        await waitForAutomationCheck(app)
+        app.setUpPermissions()
+        #expect(fixture.accessibilityRequests == 1)
+        #expect(app.accessibilityAccess == .denied)
+        app.setUpPermissions()
+        #expect(fixture.accessibilityRequests == 1)
+        #expect(fixture.urls.last?.absoluteString.contains("Privacy_Accessibility") == true)
+        fixture.accessibilityAccess = .granted
+        app.checkAgain()
+        #expect(app.accessibilityAccess == .granted)
+        #expect(app.settingsMessage?.stringValue.contains("Accessibility") == false)
     }
 
     @Test func staleAutomationStatusCannotOverwriteAnExplicitGrantedRequest() async throws {
@@ -302,6 +347,7 @@ import MessagesMCPAdapter
         services.sources = { fixture.sources }
         services.readAccess = { _ in fixture.readAccess }
         services.automationAccess = { fixture.automationAccess }
+        services.accessibilityAccess = { fixture.accessibilityAccess }
         services.makeDirectory = { MenuRuntimeDirectory() }
         services.presentWindow = { _ in fixture.presentations += 1 }
         let socketRoot = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(".scratch/a\(Int.random(in: 0...999_999))")
@@ -327,6 +373,7 @@ import MessagesMCPAdapter
         }.value
         #expect(String(decoding: response, as: UTF8.self).contains("synthetic read boundary"))
         #expect(fixture.automationRequests == 0)
+        #expect(fixture.accessibilityRequests == 0)
     }
 
     private func waitForAutomationCheck(_ app: MessagesMenuApp) async {

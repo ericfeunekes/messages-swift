@@ -91,3 +91,29 @@ public enum AutomationSetupAccess: Equatable, Sendable {
         }
     }
 }
+
+/// The app's Accessibility trust for future native conversation organization.
+/// This only reports or requests the system grant; it does not perform an
+/// Accessibility action.
+public enum AccessibilitySetupAccess: Equatable, Sendable {
+    case denied, granted
+
+    public enum Action: Equatable, Sendable { case request, none }
+    public var action: Action {
+        switch self {
+        case .denied: .request
+        case .granted: .none
+        }
+    }
+
+    /// Checks trust without presenting a system prompt.
+    public static func check() -> Self {
+        AXIsProcessTrusted() ? .granted : .denied
+    }
+
+    /// May open the system Accessibility permission prompt and returns the
+    /// current trust state. macOS may grant access later in System Settings.
+    public static func request() -> Self {
+        AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary) ? .granted : .denied
+    }
+}

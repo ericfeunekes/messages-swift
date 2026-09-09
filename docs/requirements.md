@@ -79,6 +79,15 @@ Counts use the same source classification as history. Source-marked retracted/un
 
 Image and file access resolve an attachment belonging to a message result. Neither is an arbitrary filesystem reader. Missing or undownloaded attachments remain distinguishable from absent attachments. File access preserves original bytes and type/name metadata; size limits fail explicitly without truncation. Image views report resizing and frame selection. No automatic cloud fetch is required. Outgoing files are shown in the preview and validated before sending.
 
+## Conversation organization
+
+Organization must work end to end through the agent. The user may request an
+operation and approve its concrete target, but must not have to navigate Messages,
+select a conversation or click native controls. Targeting, action and verification
+belong to the tool. Do not expose selected-chat-only controls as satisfying this
+requirement. Unsupported or ambiguous targets must produce an explicit failure,
+not a guessed action or a request for manual navigation.
+
 ## Scope boundaries
 
 - Intel macOS is the initial validation target. The minimum supported macOS version and Apple Silicon release coverage remain [open](decisions.md#platform-and-runtime).

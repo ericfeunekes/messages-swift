@@ -21,6 +21,13 @@ This is the register of unresolved requirements and design choices. It separates
   alternative for new phone numbers after a confirmed non-send. The installed
   explicit-service interface is not the desired normal user workflow. Uncertain
   attempts and missing delivery receipts must not cause another send.
+- **Organization automation:** the owner requires end-to-end agent operation:
+  resolve the requested conversation, locate it without user navigation, perform
+  the approved action and verify the outcome. A selected-chat-only feature or a
+  workflow requiring the user to open, select or click conversations does not
+  meet the requirement. If reliable automatic targeting cannot be established
+  through the permitted interfaces, omit the organization capability rather than
+  shipping a manual workaround.
 - **Organization delivery:** implement one narrowly scoped operation at a time.
   Establish native conversation targeting, build the action, exercise synthetic
   boundary/failure tests, then validate the native action on an explicitly

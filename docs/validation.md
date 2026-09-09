@@ -351,9 +351,9 @@ a missing or ambiguous native route must return `messages_route_unavailable`.
 A command accepted by Messages is not delivered: report observed delivery
 separately, or leave it unconfirmed. Never force a network failure by changing
 account or security settings. Controlled partial/unknown failure tests remain
-synthetic. Keep the approved files unchanged until Messages finishes reading
-them: metadata checks between commands do not freeze a path after handoff, and
-this lane does not establish protection from that final mutation window.
+synthetic. Keep originals unchanged through batch preparation and dispatch.
+The staging correction below retains private snapshots for Messages after the
+operation returns; native asynchronous consumption remains a separate live gate.
 
 ### Sending implementation result
 
@@ -376,3 +376,33 @@ Unix socket and stdio relay. Pillow 11.3.0 independently decoded returned images
 Both packaging property lists passed validation. These synthetic results preserve
 the live consent, exact-preview confirmation, sending and client attachment
 consumption gates described above. Activity counts are not part of this build.
+
+
+### Outgoing file-handoff correction
+
+A live synthetic text/PNG/PDF batch delivered text but not files. Narrow native
+logs identified imagent sandbox `file-read-data` denials and `Operation not
+permitted` for both exact repository fixture paths. The app's successful local
+file validation and AppleScript reply did not prove imagent could read them.
+The correction stages all inputs in the app-owned Messages attachment directory
+before any command. The numeric database error and transfer-state values are
+not assigned undocumented enum meanings by this fix.
+
+Synthetic tests use an injected staging root under `.scratch`, never the live
+Messages directory. They exercise real copies, source changes, copy failures,
+duplicate filenames, private modes, staged argument paths, ordering, retained
+accepted/unknown inputs and cleanup of unhanded inputs on rejection/cancellation.
+They do not establish imagent access on the live Mac.
+
+The next live gate is **files only**, with root's authorization covering the
+exact test destination and files: the same selected own-number iMessage conversation, and the
+committed `Tests/Fixtures/Attachments/red.png` (81 bytes) followed by
+`Tests/Fixtures/Attachments/document.pdf` (1529 bytes), with no text. Confirm
+received image/document content and inspect only these new test rows/logs if
+needed. Do not resend the earlier batch, change permissions or claim delivery
+from the AppleScript reply. Root owns installation, test authorization and execution.
+
+The staging correction passed 96 XCTest tests and 43 Swift Testing tests on the
+Intel host, plus the six independent MCP send checks with staged paths/bytes and
+retention assertions. The native consumer's access to the corrected staging path
+remains a live gate; synthetic copy success does not claim delivery.

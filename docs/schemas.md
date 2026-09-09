@@ -148,7 +148,8 @@ The result has `status`, `delivery: "unconfirmed"`, optional `destination`,
 `destination` reports an optional `chatID`, service and recipients. A
 `needs_choice` result sends nothing; choose the contact/handle and obtain a revised
 preview confirmation. Validation failures use the normal error envelope with
-`invalid_send_destination`, `invalid_send_content` or `invalid_send_file`.
+`invalid_send_destination`, `invalid_send_content`, `invalid_send_file`,
+`send_file_changed` or `send_file_staging_failed`.
 
 Each part has its zero-based `index`, `kind` (`text` or `file`), optional
 zero-based `fileIndex`, `outcome` and optional stable `errorCode`. Text precedes
@@ -164,11 +165,24 @@ retry, duplicate send, new-group creation or service switching occurs.
 
 All files must be readable regular files before the first command. Relative
 paths, final-component symlinks, directories, missing files and NUL strings are
-rejected. File identity, size and modification/change times are checked again
-before each command, catching changes across earlier awaited sends. A changed
-file stops the batch with `send_file_changed`. This does not freeze a path after
-handoff to Messages or verify what Messages later reads. Keep approved files
-unchanged until Messages finishes processing them.
+rejected. The operation copies every validated file into a unique private batch
+under `~/Library/Messages/Attachments/messages-swift` before the first command.
+Each file keeps its original name in a separate index directory, so duplicate
+names cannot overwrite one another. Copies use validated open source descriptors;
+source identity, size and modification/change times are checked across copying
+and before each command. A changed source stops with `send_file_changed`; staging
+destination/copy failures report `send_file_staging_failed` without dispatching
+any part. A source that disappears or becomes unreadable after initial validation
+also reports `send_file_changed`.
+
+Messages receives only the staged paths. Accepted or uncertain file transfers
+retain their staged inputs after the operation returns for native asynchronous
+consumption. Files known not to have been handed off are removed, including
+unattempted files after rejection or cancellation. There is no expiry timer or
+sweep of other batches/history attachments. The private retained copies can use
+disk space until a separately defined cleanup policy is implemented; script
+acceptance is not evidence that it is safe to delete them. Staging does not prove
+delivery or authenticate whether content changed since the agent's preview.
 
 The public scripting adapter requires Automation permission already granted by
 the setup UI. It does not prompt on a send. Existing chats use the exact scripting

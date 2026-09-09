@@ -40,4 +40,6 @@ public enum SendValidationError: String, Error, Sendable {
     case invalidDestination = "invalid_send_destination"
     case invalidContent = "invalid_send_content"
     case invalidFile = "invalid_send_file"
+    case fileChanged = "send_file_changed"
+    case fileStagingFailed = "send_file_staging_failed"
 }

@@ -81,7 +81,8 @@ let operations = MessagesOperations(
   directory: FixtureContacts(),
   binding: ContactsContainerBinding(containerID: "synthetic-selected-container"),
   state: try LocalState(directory: fixture.stateDirectory),
-  sender: FixtureSender(log: fixture.stateDirectory.appendingPathComponent("send-invocations.jsonl"))
+  sender: FixtureSender(log: fixture.stateDirectory.appendingPathComponent("send-invocations.jsonl")),
+  outgoingStagingDirectory: fixture.stateDirectory.appendingPathComponent("outgoing")
 )
 if let index = CommandLine.arguments.firstIndex(of: "--socket"), index + 1 < CommandLine.arguments.count {
   let server = UnixSocketServer(url: URL(fileURLWithPath: CommandLine.arguments[index + 1]))

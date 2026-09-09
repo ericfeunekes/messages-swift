@@ -120,6 +120,7 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
     private func fixture(_ people: [ContactPerson], sender: any MessagesSending) throws -> MessagesOperations {
         try? FileManager.default.removeItem(at: root.appendingPathComponent("chat.db"))
         try? FileManager.default.removeItem(at: root.appendingPathComponent("state"))
+        try? FileManager.default.removeItem(at: root.appendingPathComponent("outgoing"))
         let date = Int64((now.timeIntervalSince1970 - 978_307_200) * 1_000_000_000)
         try sql("""
         CREATE TABLE chat (guid TEXT, chat_identifier TEXT, display_name TEXT, service_name TEXT);
@@ -137,13 +138,43 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
         """)
         let state = try LocalState(directory: root.appendingPathComponent("state"))
         try state.bindContainer("fixture")
-        return MessagesOperations(store: MessageStore(path: root.appendingPathComponent("chat.db").path), directory: SendDirectory(people), binding: ContactsContainerBinding(containerID: "fixture"), state: state, sender: sender)
+        return MessagesOperations(
+            store: MessageStore(path: root.appendingPathComponent("chat.db").path),
+            directory: SendDirectory(people),
+            binding: ContactsContainerBinding(containerID: "fixture"),
+            state: state,
+            sender: sender,
+            outgoingStagingDirectory: root.appendingPathComponent("outgoing")
+        )
     }
 
     private func localFile(_ name: String, contents: String = "fixture") throws -> URL {
         let url = root.appendingPathComponent(name)
         try Data(contents.utf8).write(to: url)
         return url
+    }
+
+    private func stagedPaths(in dispatches: [(SendTarget, SendPayload)]) throws -> [URL] {
+        try dispatches.map { _, payload in
+            guard case let .file(path) = payload else {
+                throw NSError(domain: "SendOperationsTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Expected a staged file payload"])
+            }
+            return URL(fileURLWithPath: path)
+        }
+    }
+
+    private func outgoingContents() throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("outgoing").path)
+    }
+
+    private func stagedData() throws -> [Data] {
+        let outgoing = root.appendingPathComponent("outgoing")
+        return try FileManager.default.subpathsOfDirectory(atPath: outgoing.path).compactMap { relativePath in
+            let file = outgoing.appendingPathComponent(relativePath)
+            var isDirectory = ObjCBool(false)
+            guard FileManager.default.fileExists(atPath: file.path, isDirectory: &isDirectory), !isDirectory.boolValue else { return nil }
+            return try Data(contentsOf: file)
+        }
     }
 
     func testExistingDirectAndGroupChatsRouteOnlyByExactGUID() async throws {
@@ -273,7 +304,12 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(result.delivery, "unconfirmed")
         XCTAssertEqual(result.parts.map(\.outcome), [.accepted, .accepted, .accepted])
         let dispatches = await sender.dispatches()
-        XCTAssertEqual(dispatches.map(\.1), [.text("first text"), .file(first.path), .file(second.path)])
+        XCTAssertEqual(dispatches.map(\.1).first, .text("first text"))
+        let staged = try stagedPaths(in: Array(dispatches.dropFirst()))
+        XCTAssertEqual(staged.map { $0.lastPathComponent }, ["first.txt", "second.txt"])
+        XCTAssertNotEqual(staged[0].path, first.path)
+        XCTAssertNotEqual(staged[1].path, second.path)
+        XCTAssertEqual(try staged.map { try Data(contentsOf: $0) }, [Data("fixture".utf8), Data("fixture".utf8)])
     }
 
     func testOneAndMultipleFilesWithoutText() async throws {
@@ -289,7 +325,10 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(multiple.status, .accepted)
         XCTAssertEqual(multiple.parts.map(\.fileIndex), [0, 1])
         let calls = await sender.dispatches()
-        XCTAssertEqual(calls.map(\.1), [.file(first.path), .file(first.path), .file(second.path)])
+        let staged = try stagedPaths(in: calls)
+        XCTAssertEqual(staged.map { $0.lastPathComponent }, ["file-only-one.txt", "file-only-one.txt", "file-only-two.txt"])
+        XCTAssertEqual(try staged.map { try Data(contentsOf: $0) }, [Data("fixture".utf8), Data("fixture".utf8), Data("fixture".utf8)])
+        XCTAssertEqual(Set(staged.map(\.path)).count, staged.count)
     }
 
     func testRejectedAndUnknownStopTheBatchWithoutRetry() async throws {
@@ -356,11 +395,54 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(cancelled.parts.map(\.outcome), [.accepted, .notAttempted])
         let cancelledDispatches = await sender.dispatches()
         XCTAssertEqual(cancelledDispatches.map(\.1), [.text("text")])
+        XCTAssertTrue(try outgoingContents().isEmpty)
 
         let next = try await ops.sendMessage(.init(chatID: "chat-direct-guid", text: "next"), now: now)
         XCTAssertEqual(next.status, .accepted)
         let finalDispatches = await sender.dispatches()
         XCTAssertEqual(finalDispatches.map(\.1), [.text("text"), .text("next")])
+    }
+
+    func testWholeFileBatchIsStagedBeforePausedTextDispatch() async throws {
+        let sender = SuspendedSender()
+        let ops = try fixture([person("alice", "Alice", ["+15550000001"])], sender: sender)
+        let firstFile = try localFile("first-staged-before-text.txt", contents: "first bytes")
+        let secondFile = try localFile("second-staged-before-text.txt", contents: "second bytes")
+        let task = Task {
+            try await ops.sendMessage(.init(chatID: "chat-direct-guid", text: "text", files: [firstFile.path, secondFile.path]), now: self.now)
+        }
+        await sender.waitForFirstDispatch()
+
+        let staged = try stagedData()
+        XCTAssertEqual(staged.count, 2)
+        XCTAssertTrue(staged.contains(Data("first bytes".utf8)))
+        XCTAssertTrue(staged.contains(Data("second bytes".utf8)))
+
+        await sender.release()
+        let result = try await task.value
+        XCTAssertEqual(result.status, .accepted)
+    }
+
+    func testCancellationRetainsOnlyTheAcceptedFileStage() async throws {
+        let sender = SuspendedSender()
+        let ops = try fixture([person("alice", "Alice", ["+15550000001"])], sender: sender)
+        let firstFile = try localFile("accepted-before-cancel.txt", contents: "first")
+        let secondFile = try localFile("not-attempted-after-cancel.txt", contents: "second")
+        let task = Task {
+            try await ops.sendMessage(.init(chatID: "chat-direct-guid", files: [firstFile.path, secondFile.path]), now: self.now)
+        }
+        await sender.waitForFirstDispatch()
+
+        task.cancel()
+        await sender.release()
+        let result = try await task.value
+
+        XCTAssertEqual(result.status, .partial)
+        XCTAssertEqual(result.parts.map(\.outcome), [.accepted, .notAttempted])
+        let dispatched = try stagedPaths(in: await sender.dispatches())
+        XCTAssertEqual(dispatched.count, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dispatched[0].path))
+        XCTAssertEqual(try outgoingContents().count, 1)
     }
 
     func testReadAndFindNeverDispatch() async throws {
@@ -370,6 +452,78 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
         _ = try await ops.readMessages(.init(chatID: "chat-direct-guid"), now: now)
         let dispatches = await sender.dispatches()
         XCTAssertTrue(dispatches.isEmpty)
+    }
+
+    func testTextOnlySendNeverCreatesStaging() async throws {
+        let sender = RecordingSender()
+        let ops = try fixture([person("alice", "Alice", ["+15550000001"])], sender: sender)
+
+        let result = try await ops.sendMessage(.init(chatID: "chat-direct-guid", text: "only text"), now: now)
+
+        XCTAssertEqual(result.status, .accepted)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("outgoing").path))
+    }
+
+    func testStagingFailurePreventsTextAndFileDispatch() async throws {
+        let sender = RecordingSender()
+        let ops = try fixture([person("alice", "Alice", ["+15550000001"])], sender: sender)
+        let file = try localFile("file.txt")
+        let outgoing = root.appendingPathComponent("outgoing")
+        try FileManager.default.createDirectory(at: outgoing, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: outgoing.path)
+
+        do {
+            _ = try await ops.sendMessage(.init(chatID: "chat-direct-guid", text: "text", files: [file.path]), now: now)
+            XCTFail("A non-private staging root must fail before the text dispatch")
+        } catch let error as SendValidationError {
+            XCTAssertEqual(error, .fileStagingFailed)
+        }
+        let dispatches = await sender.dispatches()
+        XCTAssertTrue(dispatches.isEmpty)
+    }
+
+    func testFileRetentionTracksAcceptedAndUnknownOutcomesPerPart() async throws {
+        for (outcomes, expectedStatus, retainedCount) in [
+            ([SendDispatchOutcome.accepted, .unknown], SendStatus.unknown, 2),
+            ([.rejected], SendStatus.rejected, 0),
+            ([.unavailable], SendStatus.rejected, 0),
+        ] {
+            let sender = RecordingSender(outcomes: outcomes)
+            let ops = try fixture([person("alice", "Alice", ["+15550000001"])], sender: sender)
+            let first = try localFile("retained-first-\(UUID().uuidString).txt")
+            let second = try localFile("retained-second-\(UUID().uuidString).txt")
+
+            let result = try await ops.sendMessage(.init(chatID: "chat-direct-guid", files: [first.path, second.path]), now: now)
+
+            XCTAssertEqual(result.status, expectedStatus)
+            let dispatches = await sender.dispatches()
+            XCTAssertEqual(dispatches.count, retainedCount == 0 ? 1 : 2)
+            let files = try stagedPaths(in: dispatches)
+            XCTAssertEqual(files.filter { FileManager.default.fileExists(atPath: $0.path) }.count, retainedCount)
+            XCTAssertEqual((try? outgoingContents())?.count ?? 0, retainedCount == 0 ? 0 : 1)
+        }
+    }
+
+    func testOnlyAcceptedFileStageSurvivesLaterRejectedOrUnavailableFile() async throws {
+        for outcome in [SendDispatchOutcome.rejected, .unavailable] {
+            let sender = RecordingSender(outcomes: [.accepted, outcome, .accepted])
+            let ops = try fixture([person("alice", "Alice", ["+15550000001"])], sender: sender)
+            let first = try localFile("accepted-\(outcome.rawValue)-\(UUID().uuidString).txt", contents: "first")
+            let second = try localFile("failed-\(outcome.rawValue)-\(UUID().uuidString).txt", contents: "second")
+            let third = try localFile("unattempted-\(outcome.rawValue)-\(UUID().uuidString).txt", contents: "third")
+
+            let result = try await ops.sendMessage(.init(chatID: "chat-direct-guid", files: [first.path, second.path, third.path]), now: now)
+
+            XCTAssertEqual(result.status, .partial)
+            XCTAssertEqual(result.parts.map(\.outcome), [.accepted, .rejected, .notAttempted])
+            let staged = try stagedPaths(in: await sender.dispatches())
+            XCTAssertEqual(staged.count, 2)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: staged[0].path))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: staged[1].path))
+            let batch = staged[0].deletingLastPathComponent().deletingLastPathComponent()
+            XCTAssertFalse(FileManager.default.fileExists(atPath: batch.appendingPathComponent("2").path))
+            XCTAssertEqual(try outgoingContents().count, 1)
+        }
     }
 }
 

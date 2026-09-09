@@ -222,7 +222,12 @@ individual service selection precede the send command. Errors after dispatch
 begins are conservatively unknown and never retried.
 
 The adapter returns no message ID or delivery claim because the scripting send
-reply does not prove either. File metadata checks catch changes between ordered
-commands; they do not make multiple sends atomic or freeze files once Messages
-receives their paths. No receipt store, consent boolean or server approval broker
-is involved. Drafting stays entirely in the agent/client guidance.
+reply does not prove either. `StagedOutgoingFiles` prepares the whole file batch
+under the app-owned `Library/Messages/Attachments/messages-swift` directory before
+any dispatch. This gives imagent a Messages-readable path instead of the caller's
+repository/Desktop path. Private per-batch/per-index directories retain original
+filenames; descriptor-based copies bind each staged snapshot to the validated source identity.
+Only accepted/uncertain file inputs outlive the invocation; unhanded files are
+removed. No TTL or sweep assumes Messages has finished reading after its reply.
+This is transfer-input ownership, not a receipt store or a delivery guarantee.
+Drafting and approval remain in the agent/client guidance.

@@ -3,6 +3,7 @@ import asyncio
 import json
 import shutil
 import uuid
+from pathlib import Path
 import sys
 
 sys.dont_write_bytecode = True
@@ -62,9 +63,14 @@ async def checks(client, initialization):
     assert result["status"] == "accepted" and result["delivery"] == "unconfirmed"
     assert [part["outcome"] for part in result["parts"]] == ["accepted"] * 3
     calls = [json.loads(line) for line in log.read_text().splitlines()]
-    assert [(row["target"], row["kind"], row["value"]) for row in calls] == [
-        ("chat-group", "text", text), *(('chat-group', 'file', str(path)) for path in files)
-    ]
+    assert (calls[0]["target"], calls[0]["kind"], calls[0]["value"]) == ("chat-group", "text", text)
+    for index, original in enumerate(files):
+        row = calls[index + 1]
+        staged = Path(row["value"])
+        assert row["target"] == "chat-group" and row["kind"] == "file"
+        assert staged != original and staged.is_relative_to(base.STATE_DIRECTORY / "outgoing")
+        assert staged.name == original.name and staged.read_bytes() == original.read_bytes()
+    assert Path(calls[1]["value"]).parent.parent == Path(calls[2]["value"]).parent.parent
     base.record("exact existing group plus Unicode text and multi-file ordering")
 
     direct = base.content(await client.call_tool("send_message", {
@@ -85,7 +91,14 @@ async def checks(client, initialization):
         }))
         assert result["status"] == expected and result["delivery"] == "unconfirmed"
         assert [part["outcome"] for part in result["parts"]] == ["accepted", marker.removeprefix("fixture-"), "not_attempted"]
-        assert len(log.read_text().splitlines()) == before + 2
+        lines = log.read_text().splitlines()
+        assert len(lines) == before + 2
+        staged = Path(json.loads(lines[-1])["value"])
+        assert staged.name == stopping.name
+        assert staged.exists() == (expected == "unknown")
+        if expected == "unknown":
+            assert staged.read_bytes() == stopping.read_bytes()
+            assert not (staged.parent.parent / "1").exists(), "unattempted stage must be removed"
     base.record("partial and unknown stop remaining parts without retries")
 
 

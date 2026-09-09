@@ -7,14 +7,16 @@ public actor MessagesOperations {
     private let binding: ContactsContainerBinding
     private let state: LocalState
     private let sender: any MessagesSending
+    private let outgoingStagingDirectory: URL
     private var sendInProgress = false
 
-    public init(store: MessageStore, directory: any ContactsDirectorySource, binding: ContactsContainerBinding, state: LocalState, sender: any MessagesSending = MessagesScriptingSender()) {
+    public init(store: MessageStore, directory: any ContactsDirectorySource, binding: ContactsContainerBinding, state: LocalState, sender: any MessagesSending = MessagesScriptingSender(), outgoingStagingDirectory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Messages/Attachments/messages-swift", isDirectory: true)) {
         self.store = store
         self.directory = directory
         self.binding = binding
         self.state = state
         self.sender = sender
+        self.outgoingStagingDirectory = outgoingStagingDirectory
     }
 
     public func sendMessage(_ input: SendMessageInput, now: Date = Date()) async throws -> SendMessageResult {
@@ -73,6 +75,8 @@ public actor MessagesOperations {
         guard !sendInProgress else { result.errorCode = "send_in_progress"; return result }
         sendInProgress = true
         defer { sendInProgress = false }
+        let staged = try StagedOutgoingFiles(files: files, root: outgoingStagingDirectory)
+        defer { staged.cleanupUnhanded() }
         for index in result.parts.indices {
             if Task.isCancelled {
                 result.errorCode = "send_cancelled"
@@ -84,9 +88,12 @@ public actor MessagesOperations {
                 break
             }
             let payload: SendPayload
-            if let fileIndex = result.parts[index].fileIndex { payload = .file(input.files[fileIndex]) }
+            if let fileIndex = result.parts[index].fileIndex { payload = .file(staged.paths[fileIndex]) }
             else { payload = .text(input.text!) }
             let outcome = await sender.send(target: target, payload: payload)
+            if let fileIndex = result.parts[index].fileIndex, outcome == .accepted || outcome == .unknown {
+                staged.retain(index: fileIndex)
+            }
             switch outcome {
             case .accepted: result.parts[index].outcome = .accepted
             case .unavailable:

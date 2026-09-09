@@ -175,9 +175,11 @@ validation gates are recorded in [validation](validation.md).
 ### Connection recovery after an app restart
 
 The stdio bridge remains available when the app disconnects. It discards incomplete
-backend JSON and returns a connection-interrupted JSON-RPC error for every
-outstanding request. The outcome can be unknown, including a send that the app
-executed before its response was lost. No operation request is replayed.
+backend JSON and returns a JSON-RPC error for each outstanding request. Error
+data reports `not_submitted` when no request bytes were written, including a
+failed connection or initialization. Once bytes were written, it reports
+`outcome_unknown`: a send may have executed before its response was lost. No
+operation request is replayed.
 
 A new request makes one connection attempt. If the prior session initialized,
 the bridge first repeats that initialization and sends `notifications/initialized`
@@ -190,12 +192,17 @@ Notifications never open a connection. No timer reconnects an idle session.
 |---|---|---|
 | Disconnected | New request | One connect attempt; restore initialization when previously negotiated |
 | Disconnected | Notification or client response | Discard; no connection attempt |
-| Restoring | Matching initialization response | Send initialized notification, then the new request once |
+| Restoring | Matching initialization response | Send initialized notification, then uncancelled queued work once |
 | Restoring | EOF, write failure, mismatch or timeout | Close backend; fail pending request; become disconnected |
 | Connected | Complete response | Forward complete JSON and retire its request ID |
-| Connected | Client cancellation | Forward cancellation and retire its request ID; MCP cancellation does not require a response |
+| Any | Client cancellation | Remove queued or wholly unwritten request; forward cancellation only if request bytes were written; retire its ID |
 | Connected | EOF or I/O failure | Discard incomplete backend frame and unsent bytes; fail all pending IDs; become disconnected |
 | Any | Client stdin EOF or output failure | Exit and close the owned socket |
+
+Complete client controls are processed before backend writes. A cancellation can
+remove a request waiting for restoration even when ordinary queued requests
+precede it. A cancelled, unwritten request never reaches the app; cancellation
+after writing remains best effort and does not imply a send was undone.
 
 Only initialization survives backend loss. Complete response frames already
 received remain deliverable; partial frames cannot contaminate the next response.

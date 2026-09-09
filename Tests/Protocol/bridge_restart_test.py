@@ -57,6 +57,7 @@ async def main():
         print('PASS active SDK watch interrupted honestly; later request restores backend without replay')
         for _ in range(130):
             request_id = await client.begin('tools/call', {'name': 'watch_messages', 'arguments': {'chatID': 'chat-watch', 'cursor': await fixture.establish(client), 'waitSeconds': 20}})
+            assert 'result' in await client.request('tools/list', {})
             await client.notify('notifications/cancelled', {'requestId': request_id})
         assert 'result' in await client.request('tools/list', {})
         print('PASS 130 SDK cancellations retire requests without requiring a response')

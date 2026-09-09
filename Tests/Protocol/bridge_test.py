@@ -122,6 +122,7 @@ for partial in (False, True):
     def interrupted_client(c):
         c.initialize(); c.send(request(2, 'send_message'))
         result = c.receive(); assert result['id'] == 2 and 'unknown' in result['error']['message']
+        assert result['error']['data']['disposition'] == 'outcome_unknown'
         c.send(request(3)); assert c.receive()['id'] == 3
         c.close()
     run_case('interrupted send, no replay, partial response=' + str(partial), interrupted_server, interrupted_client)
@@ -142,16 +143,18 @@ def large_client(c):
     c.close()
 run_case('12 MiB request and response preserve complete JSON across partial writes', large_server, large_client)
 
+watch_started = threading.Event()
 def cancel_server(accept):
     with accept() as conn:
         peer = Peer(conn); peer.initialize()
         assert peer.receive() == request(2, 'watch_messages')
+        watch_started.set()
         assert peer.receive() == {'jsonrpc': '2.0', 'method': 'notifications/cancelled', 'params': {'requestId': 2}}
         assert peer.receive() == request(131)
         peer.send({'jsonrpc': '2.0', 'id': 131, 'result': {}})
         assert conn.recv(1) == b''
 def cancel_client(c):
-    c.initialize(); c.send(request(2, 'watch_messages'))
+    c.initialize(); c.send(request(2, 'watch_messages')); assert watch_started.wait(5)
     c.send({'jsonrpc': '2.0', 'method': 'notifications/cancelled', 'params': {'requestId': 2}})
     c.send(request(131)); assert c.receive()['result'] == {}
     c.close()
@@ -187,7 +190,7 @@ def write_loss_server(accept):
         assert conn.recv(1) == b''
 def write_loss_client(c):
     c.initialize(); c.send(request(2, 'send_message', text=large))
-    assert c.receive()['error']['code'] == -32000
+    assert c.receive()['error']['data']['disposition'] == 'outcome_unknown'
     c.send(request(3)); assert c.receive()['result'] == {}
     c.close()
 run_case('backend loss mid-request write discards remainder without replay', write_loss_server, write_loss_client)
@@ -210,7 +213,7 @@ for mode in ('timeout', 'mismatch', 'EOF'):
             assert conn.recv(1) == b''
     def bad_handshake_client(c):
         c.initialize(); assert reconnect_ready.wait(5)
-        c.send(request(2)); assert c.receive()['error']['code'] == -32000
+        c.send(request(2)); assert c.receive()['error']['data']['disposition'] == 'not_submitted'
         c.send(request(3)); assert c.receive()['result'] == {}
         c.close()
     run_case('failed reinitialization ' + mode + ' fails only new request and permits later connection', bad_handshake_server, bad_handshake_client)
@@ -223,7 +226,7 @@ with tempfile.TemporaryDirectory(prefix='bridge-', dir=SCRATCH) as base:
         if kind == 'symlink': path.symlink_to('missing-target')
         p = subprocess.Popen([str(BINARY), 'mcp.sock'], cwd=runtime, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         c = Client(p); c.send(INIT)
-        assert c.receive()['error']['code'] == -32000
+        assert c.receive()['error']['data']['disposition'] == 'not_submitted'
         assert p.poll() is None
         c.close()
         if kind == 'file': assert path.read_text() == 'preserve me'; path.unlink()
@@ -252,10 +255,12 @@ def reused_client(c):
     c.close()
 run_case('reused and string IDs retain handshake; complete response drains before partial EOF', reused_server, reused_client)
 
+saturated_started = threading.Event()
 def saturated_server(accept):
     with accept() as conn:
         peer = Peer(conn); peer.initialize()
         for i in range(2, 130): assert peer.receive() == request(i)
+        saturated_started.set()
         assert peer.receive() == {'jsonrpc': '2.0', 'method': 'notifications/cancelled', 'params': {'requestId': 2}}
         assert peer.receive() == request(131)
         peer.send({'jsonrpc': '2.0', 'id': 131, 'result': {}})
@@ -264,7 +269,46 @@ def saturated_client(c):
     c.initialize()
     for i in range(2, 131): c.send(request(i))
     overload = c.receive(); assert overload['id'] == 130 and 'not submitted' in overload['error']['message']
+    assert saturated_started.wait(5)
     c.send({'jsonrpc': '2.0', 'method': 'notifications/cancelled', 'params': {'requestId': 2}})
     c.send(request(131)); assert c.receive()['result'] == {}
     c.close()
 run_case('bounded in-flight capacity rejects excess without blocking cancellation or EOF', saturated_server, saturated_client)
+
+for extra in (False, True):
+    app_closed = threading.Event()
+    restoring = threading.Event()
+    controls_written = threading.Event()
+    effects = []
+    def cancelled_restore_server(accept):
+        with accept() as conn: Peer(conn).initialize()
+        app_closed.set()
+        with accept() as conn:
+            peer = Peer(conn); assert peer.receive() == INIT
+            restoring.set(); assert controls_written.wait(5)
+            peer.send({'jsonrpc': '2.0', 'id': 1, 'result': RESULT})
+            assert peer.receive()['method'] == 'notifications/initialized'
+            while True:
+                message = peer.receive()
+                if message.get('method') == 'tools/call':
+                    if message['params']['name'] == 'send_message': effects.append('sent')
+                    peer.send({'jsonrpc': '2.0', 'id': message['id'], 'result': {}})
+                    if message['id'] == 10: break
+            assert conn.recv(1) == b''
+    def cancelled_restore_client(c):
+        c.initialize(); assert app_closed.wait(5)
+        c.send(request(2, 'send_message'))
+        assert restoring.wait(5)
+        # Place ordinary queued work before the cancellation, including a frame
+        # larger than one input read. Control processing must reach past it.
+        batch = b''
+        if extra:
+            batch += wire(request(3, payload='q' * 100000)) + wire(request(4))
+        batch += wire({'jsonrpc': '2.0', 'method': 'notifications/cancelled', 'params': {'requestId': 2}})
+        batch += wire(request(10))
+        c.p.stdin.write(batch); c.p.stdin.flush(); controls_written.set()
+        expected = [3, 4, 10] if extra else [10]
+        assert [c.receive()['id'] for _ in expected] == expected
+        c.close()
+    run_case('cancel during restoration never submits send; queued work ahead=' + str(extra), cancelled_restore_server, cancelled_restore_client)
+    assert effects == []

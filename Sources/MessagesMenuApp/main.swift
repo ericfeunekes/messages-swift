@@ -489,7 +489,10 @@ private actor RuntimeStatusSignal {
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Messages/chat.db").path
         messagesAccess = services.readAccess(path)
         accessibilityAccess = services.accessibilityAccess()
-        if accessibilityAccess == .granted { requestedAccessibility = false }
+        if accessibilityAccess == .granted {
+            requestedAccessibility = false
+            accessibilityMessage = ""
+        }
         defer { updateSettingsStatus(); refreshAutomationAccess() }
         evaluateSetupState()
     }

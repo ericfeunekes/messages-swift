@@ -289,7 +289,7 @@ import MessagesMCPAdapter
         fixture.automationAccess = .granted
         let app = fixture.app()
         defer { fixture.clean(app) }
-        app.showSettings()
+        app.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         await waitForAutomationCheck(app)
         app.setUpPermissions()
         #expect(fixture.accessibilityRequests == 1)
@@ -298,7 +298,7 @@ import MessagesMCPAdapter
         #expect(fixture.accessibilityRequests == 1)
         #expect(fixture.urls.last?.absoluteString.contains("Privacy_Accessibility") == true)
         fixture.accessibilityAccess = .granted
-        app.checkAgain()
+        app.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
         #expect(app.accessibilityAccess == .granted)
         #expect(app.settingsMessage?.stringValue.contains("Accessibility") == false)
     }

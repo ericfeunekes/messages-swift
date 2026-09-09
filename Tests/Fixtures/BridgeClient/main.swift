@@ -4,9 +4,7 @@ import MessagesMCPAdapter
 @main struct BridgeClient {
     static func main() {
         do {
-            let fd = try StdioSocketBridge.connect(path: CommandLine.arguments[1])
-            defer { close(fd) }
-            try StdioSocketBridge.relay(socket: fd)
+            try RecoveringStdioBridge.relay(path: CommandLine.arguments[1])
         } catch { exit(1) }
     }
 }

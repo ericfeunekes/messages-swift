@@ -1,101 +1,270 @@
-"""Actual relay-process checks against synthetic user-private Unix sockets."""
+"""Production framed relay over real pipes/private Unix sockets; inert fault injection."""
+import json
 import os
 from pathlib import Path
+import select
 import socket
 import subprocess
 import tempfile
 import threading
 
 ROOT = Path(__file__).resolve().parents[2]
-BINARY = Path(os.environ.get('MESSAGES_BRIDGE_TEST_BINARY', ROOT / '.build/debug/MCPBridgeTestClient'))
+BINARY = Path(os.environ.get('MESSAGES_BRIDGE_TEST_BINARY', ROOT / '.build/debug/MCPBridgeTestClient')).resolve()
 SCRATCH = ROOT / '.scratch'
+SCRATCH.mkdir(exist_ok=True)
+INIT = {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {'protocolVersion': '2025-06-18', 'capabilities': {}, 'clientInfo': {'name': 'test', 'version': '1'}}}
+RESULT = {'protocolVersion': '2025-06-18', 'capabilities': {'tools': {}}, 'serverInfo': {'name': 'fixture', 'version': '1'}}
 
-def run_case(name, handler, interaction):
-    with tempfile.TemporaryDirectory(prefix='br-', dir=SCRATCH) as base:
-        runtime = Path(base) / 'rt'
-        runtime.mkdir(mode=0o700)
-        path = runtime / 'mcp.sock'
+def wire(obj):
+    return json.dumps(obj, separators=(',', ':')).encode() + b'\n'
+
+def request(i, name='read_messages', **args):
+    return {'jsonrpc': '2.0', 'id': i, 'method': 'tools/call', 'params': {'name': name, 'arguments': args}}
+
+class Peer:
+    def __init__(self, conn):
+        self.conn = conn
+        self.data = b''
+    def receive(self):
+        while b'\n' not in self.data:
+            chunk = self.conn.recv(65536)
+            assert chunk, 'unexpected EOF'
+            self.data += chunk
+        line, self.data = self.data.split(b'\n', 1)
+        return json.loads(line)
+    def send(self, obj):
+        self.conn.sendall(wire(obj))
+    def initialize(self):
+        assert self.receive() == INIT
+        self.send({'jsonrpc': '2.0', 'id': 1, 'result': RESULT})
+        assert self.receive()['method'] == 'notifications/initialized'
+
+class Client:
+    def __init__(self, p):
+        self.p = p
+        self.data = b''
+    def send(self, obj):
+        self.p.stdin.write(wire(obj)); self.p.stdin.flush()
+    def receive(self, timeout=8):
+        while b'\n' not in self.data:
+            assert select.select([self.p.stdout], [], [], timeout)[0], 'response timed out'
+            chunk = os.read(self.p.stdout.fileno(), 65536)
+            assert chunk, 'stdio unexpectedly closed'
+            self.data += chunk
+        line, self.data = self.data.split(b'\n', 1)
+        return json.loads(line)
+    def initialize(self):
+        self.send(INIT)
+        assert self.receive()['result'] == RESULT
+        self.send({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
+    def close(self):
+        self.p.stdin.close()
+        self.p.wait(timeout=3)
+        assert self.p.returncode == 0
+
+def run_case(name, serve, interact):
+    with tempfile.TemporaryDirectory(prefix='bridge-', dir=SCRATCH) as base:
+        runtime = Path(base) / 'rt'; runtime.mkdir(mode=0o700)
         listener = socket.socket(socket.AF_UNIX)
-        listener.bind(str(path))
-        os.chmod(path, 0o600)
-        listener.listen()
-        listener.settimeout(8)
-        failures = []
-        def serve():
-            try:
-                conn, _ = listener.accept()
-                with conn:
-                    conn.settimeout(8)
-                    handler(conn)
-            except BaseException as error:
-                failures.append(error)
-        thread = threading.Thread(target=serve, daemon=True)
-        thread.start()
-        process = subprocess.Popen([str(BINARY), str(path)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        old = os.getcwd()
         try:
-            interaction(process)
+            os.chdir(runtime); listener.bind('mcp.sock'); os.chmod('mcp.sock', 0o600)
         finally:
-            if process.poll() is None:
-                process.kill()
-            process.wait(timeout=8)
-            listener.close()
-            thread.join(timeout=8)
-        assert not thread.is_alive(), 'Server did not terminate'
+            os.chdir(old)
+        listener.listen(); listener.settimeout(10)
+        failures = []
+        def accept():
+            conn, _ = listener.accept(); conn.settimeout(30)
+            return conn
+        def work():
+            try: serve(accept)
+            except BaseException as e: failures.append(e)
+        thread = threading.Thread(target=work, daemon=True); thread.start()
+        p = subprocess.Popen([str(BINARY), 'mcp.sock'], cwd=runtime, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try: interact(Client(p))
+        finally:
+            if p.poll() is None: p.kill()
+            p.wait(timeout=3); listener.close(); thread.join(timeout=12)
+        assert not thread.is_alive(), 'server leaked'
         assert not failures, repr(failures)
+        assert p.stderr.read() == b''
     print('PASS ' + name)
 
-request = b'r' * (1024 * 1024 + 37)
-response = b's' * (2 * 1024 * 1024 + 59)
-def exchange(conn):
-    chunks = []
-    while True:
-        block = conn.recv(4093)
-        if not block:
-            break
-        chunks.append(block)
-    assert b''.join(chunks) == request
-    for offset in range(0, len(response), 7919):
-        conn.sendall(response[offset:offset + 7919])
-def full_exchange(process):
-    out, err = process.communicate(request, timeout=15)
-    assert process.returncode == 0 and out == response and not err
-run_case('large partial-write duplex exchange and stdin half-close', exchange, full_exchange)
+closed = threading.Event()
+def idle_server(accept):
+    with accept() as conn:
+        peer = Peer(conn); peer.initialize()
+    closed.set()
+    with accept() as conn:
+        peer = Peer(conn); peer.initialize()
+        assert peer.receive() == request(2)
+        peer.send({'jsonrpc': '2.0', 'id': 2, 'result': {'ok': True}})
+        assert conn.recv(1) == b''
+def idle_client(c):
+    c.initialize(); assert closed.wait(5)
+    c.send(request(2)); assert c.receive() == {'jsonrpc': '2.0', 'id': 2, 'result': {'ok': True}}
+    c.close()
+run_case('idle app restart retains client and reinitializes backend', idle_server, idle_client)
 
-def close_app(conn):
-    conn.sendall(b'final-response\n')
-def open_stdin(process):
-    # Keep stdin open: app EOF must still terminate the client.
-    process.wait(timeout=8)
-    assert process.returncode == 0
-    assert process.stdout.read() == b'final-response\n'
-    process.stdin.close()
-run_case('app EOF exits bridge with stdin still open', close_app, open_stdin)
+for partial in (False, True):
+    effects = []
+    def interrupted_server(accept):
+        with accept() as conn:
+            peer = Peer(conn); peer.initialize()
+            assert peer.receive() == request(2, 'send_message')
+            effects.append('sent')
+            if partial: conn.sendall(b'{"jsonrpc":"2.0","id":2,"result":{"text":"partial')
+        with accept() as conn:
+            peer = Peer(conn); peer.initialize()
+            assert peer.receive() == request(3)
+            peer.send({'jsonrpc': '2.0', 'id': 3, 'result': {'ok': True}})
+            assert conn.recv(1) == b''
+    def interrupted_client(c):
+        c.initialize(); c.send(request(2, 'send_message'))
+        result = c.receive(); assert result['id'] == 2 and 'unknown' in result['error']['message']
+        c.send(request(3)); assert c.receive()['id'] == 3
+        c.close()
+    run_case('interrupted send, no replay, partial response=' + str(partial), interrupted_server, interrupted_client)
+    assert effects == ['sent']
 
-def reset_app(conn):
-    conn.shutdown(socket.SHUT_RDWR)
-def writing_at_exit(process):
-    process.communicate(b'x' * 200000, timeout=8)
-    assert process.returncode in (0, 1), 'Bridge terminated by a signal'
-run_case('closed-peer write never kills bridge with SIGPIPE', reset_app, writing_at_exit)
+# A complete attachment-sized response must survive framing and partial writes.
+large = 'x' * (12 * 1024 * 1024 + 17)
+def large_server(accept):
+    with accept() as conn:
+        peer = Peer(conn); peer.initialize()
+        assert peer.receive() == request(2, payload=large)
+        encoded = wire({'jsonrpc': '2.0', 'id': 2, 'result': {'data': large}})
+        for offset in range(0, len(encoded), 7919): conn.sendall(encoded[offset:offset + 7919])
+        assert conn.recv(1) == b''
+def large_client(c):
+    c.initialize(); c.send(request(2, payload=large))
+    assert c.receive(timeout=30)['result']['data'] == large
+    c.close()
+run_case('12 MiB request and response preserve complete JSON across partial writes', large_server, large_client)
 
-with tempfile.TemporaryDirectory(prefix='br-', dir=SCRATCH) as base:
-    runtime = Path(base) / 'rt'
-    runtime.mkdir(mode=0o700)
-    path = runtime / 'mcp.sock'
-    path.write_text('preserve me')
-    os.chmod(path, 0o600)
-    result = subprocess.run([str(BINARY), str(path)], capture_output=True, timeout=8)
-    assert result.returncode == 1 and path.read_text() == 'preserve me'
-    path.unlink()
-    destination = runtime / 'target'
-    target_socket = socket.socket(socket.AF_UNIX)
-    target_socket.bind(str(destination))
-    os.chmod(destination, 0o600)
-    target_socket.listen()
-    path.symlink_to(destination)
-    try:
-        result = subprocess.run([str(BINARY), str(path)], capture_output=True, timeout=8)
-        assert result.returncode == 1 and path.is_symlink()
-    finally:
-        target_socket.close()
-print('PASS regular-file and symlink endpoints rejected without mutation')
+def cancel_server(accept):
+    with accept() as conn:
+        peer = Peer(conn); peer.initialize()
+        assert peer.receive() == request(2, 'watch_messages')
+        assert peer.receive() == {'jsonrpc': '2.0', 'method': 'notifications/cancelled', 'params': {'requestId': 2}}
+        assert peer.receive() == request(131)
+        peer.send({'jsonrpc': '2.0', 'id': 131, 'result': {}})
+        assert conn.recv(1) == b''
+def cancel_client(c):
+    c.initialize(); c.send(request(2, 'watch_messages'))
+    c.send({'jsonrpc': '2.0', 'method': 'notifications/cancelled', 'params': {'requestId': 2}})
+    c.send(request(131)); assert c.receive()['result'] == {}
+    c.close()
+run_case('cancellation forwarded and stdin EOF closes backend', cancel_server, cancel_client)
+
+waiting = threading.Event()
+handshake_started = threading.Event()
+def handshake_eof_server(accept):
+    with accept() as conn:
+        peer = Peer(conn); peer.initialize()
+    waiting.set()
+    with accept() as conn:
+        assert Peer(conn).receive() == INIT
+        handshake_started.set()
+        assert conn.recv(1) == b''
+def handshake_eof_client(c):
+    c.initialize(); assert waiting.wait(5)
+    c.send(request(2)); assert handshake_started.wait(5); c.close()
+run_case('stdin EOF during reconnect handshake exits promptly', handshake_eof_server, handshake_eof_client)
+
+# Close while only a prefix of a large send request reached the app. The next
+# connection must receive initialization and the new read, never remaining bytes.
+def write_loss_server(accept):
+    with accept() as conn:
+        peer = Peer(conn); peer.initialize()
+        prefix = conn.recv(1024)
+        assert prefix and b'\n' not in prefix
+        conn.shutdown(socket.SHUT_RDWR)
+    with accept() as conn:
+        peer = Peer(conn); peer.initialize()
+        assert peer.receive() == request(3)
+        peer.send({'jsonrpc': '2.0', 'id': 3, 'result': {}})
+        assert conn.recv(1) == b''
+def write_loss_client(c):
+    c.initialize(); c.send(request(2, 'send_message', text=large))
+    assert c.receive()['error']['code'] == -32000
+    c.send(request(3)); assert c.receive()['result'] == {}
+    c.close()
+run_case('backend loss mid-request write discards remainder without replay', write_loss_server, write_loss_client)
+
+for mode in ('timeout', 'mismatch', 'EOF'):
+    reconnect_ready = threading.Event()
+    def bad_handshake_server(accept):
+        with accept() as conn:
+            Peer(conn).initialize()
+        reconnect_ready.set()
+        with accept() as conn:
+            peer = Peer(conn); assert peer.receive() == INIT
+            if mode == 'mismatch':
+                peer.send({'jsonrpc': '2.0', 'id': 1, 'result': {**RESULT, 'capabilities': {}}})
+            if mode != 'EOF': assert conn.recv(1) == b''
+        with accept() as conn:
+            peer = Peer(conn); peer.initialize()
+            assert peer.receive() == request(3)
+            peer.send({'jsonrpc': '2.0', 'id': 3, 'result': {}})
+            assert conn.recv(1) == b''
+    def bad_handshake_client(c):
+        c.initialize(); assert reconnect_ready.wait(5)
+        c.send(request(2)); assert c.receive()['error']['code'] == -32000
+        c.send(request(3)); assert c.receive()['result'] == {}
+        c.close()
+    run_case('failed reinitialization ' + mode + ' fails only new request and permits later connection', bad_handshake_server, bad_handshake_client)
+
+with tempfile.TemporaryDirectory(prefix='bridge-', dir=SCRATCH) as base:
+    runtime = Path(base) / 'rt'; runtime.mkdir(mode=0o700)
+    for kind in ('missing', 'file', 'symlink'):
+        path = runtime / 'mcp.sock'
+        if kind == 'file': path.write_text('preserve me'); path.chmod(0o600)
+        if kind == 'symlink': path.symlink_to('missing-target')
+        p = subprocess.Popen([str(BINARY), 'mcp.sock'], cwd=runtime, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        c = Client(p); c.send(INIT)
+        assert c.receive()['error']['code'] == -32000
+        assert p.poll() is None
+        c.close()
+        if kind == 'file': assert path.read_text() == 'preserve me'; path.unlink()
+        if kind == 'symlink': assert path.is_symlink(); path.unlink()
+print('PASS unavailable and unsafe endpoints return error without exiting or modifying endpoint')
+
+reused_done = threading.Event()
+def reused_server(accept):
+    with accept() as conn:
+        peer = Peer(conn); peer.initialize()
+        assert peer.receive() == request(1)
+        peer.send({'jsonrpc': '2.0', 'id': 1, 'result': {'tool': True}})
+        assert peer.receive() == request('second')
+        conn.sendall(wire({'jsonrpc': '2.0', 'id': 'second', 'result': {'complete': True}}) + b'{"partial":')
+    reused_done.set()
+    with accept() as conn:
+        peer = Peer(conn); peer.initialize()
+        assert peer.receive() == request('after')
+        peer.send({'jsonrpc': '2.0', 'id': 'after', 'result': {}})
+        assert conn.recv(1) == b''
+def reused_client(c):
+    c.initialize(); c.send(request(1)); assert c.receive()['result']['tool']
+    c.send(request('second')); assert c.receive()['result']['complete']
+    assert reused_done.wait(5)
+    c.send(request('after')); assert c.receive()['result'] == {}
+    c.close()
+run_case('reused and string IDs retain handshake; complete response drains before partial EOF', reused_server, reused_client)
+
+def saturated_server(accept):
+    with accept() as conn:
+        peer = Peer(conn); peer.initialize()
+        for i in range(2, 130): assert peer.receive() == request(i)
+        assert peer.receive() == {'jsonrpc': '2.0', 'method': 'notifications/cancelled', 'params': {'requestId': 2}}
+        assert peer.receive() == request(131)
+        peer.send({'jsonrpc': '2.0', 'id': 131, 'result': {}})
+        assert conn.recv(1) == b''
+def saturated_client(c):
+    c.initialize()
+    for i in range(2, 131): c.send(request(i))
+    overload = c.receive(); assert overload['id'] == 130 and 'not submitted' in overload['error']['message']
+    c.send({'jsonrpc': '2.0', 'method': 'notifications/cancelled', 'params': {'requestId': 2}})
+    c.send(request(131)); assert c.receive()['result'] == {}
+    c.close()
+run_case('bounded in-flight capacity rejects excess without blocking cancellation or EOF', saturated_server, saturated_client)

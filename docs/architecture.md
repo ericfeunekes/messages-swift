@@ -21,7 +21,7 @@ flowchart TD
     Send --> Scripting[Messages public scripting surface]
 ```
 
-The menu-bar app owns Contacts permission, selected-container settings, one operation actor, one Messages database connection and one state writer. Each agent connection has a separate MCP session using the same operations. The stdio bridge relays protocol bytes over a user-private Unix socket; it does not execute operations or retry requests. No TCP listener or separate system service is required. The core has no menu, terminal-output or approval-dialog dependency.
+The menu-bar app owns Contacts permission, selected-container settings, one operation actor, one Messages database connection and one state writer. Each agent connection has a separate MCP session using the same operations. The stdio bridge frames MCP messages over a user-private Unix socket; it does not execute operations or replay operation requests. No TCP listener or separate system service is required. The core has no menu, terminal-output or approval-dialog dependency.
 
 Use the official Swift MCP SDK for the adapter after verifying compatible pinned versions. Tool descriptions and schemas should be compact and explicit. Deferred tool discovery is client-dependent and is a validation question, not a reason to assume every schema is always in context.
 
@@ -174,17 +174,41 @@ validation gates are recorded in [validation](validation.md).
 
 ### Connection recovery after an app restart
 
-The bridge makes one socket connection. When the app closes that connection, the
-bridge drains received output and exits; it does not reconnect or replay requests.
-Reopening the app therefore does not revive a client transport that already ended.
+The stdio bridge remains available when the app disconnects. It discards incomplete
+backend JSON and returns a connection-interrupted JSON-RPC error for every
+outstanding request. The outcome can be unknown, including a send that the app
+executed before its response was lost. No operation request is replayed.
 
-If an existing client reports `Transport closed`, check the app's status, then
-create a fresh stdio MCP session using the installed `messages-mcp` executable.
-Initialize that session and rediscover its tools before calling an operation. A
-successful read through the fresh session distinguishes a stale client connection
-from an unavailable app. The fresh session can use the same native backend while
-the surrounding task continues; raw SQL and AppleScript substitutes are not
-needed. Re-registering configuration alone is not a verified reconnect procedure.
+A new request makes one connection attempt. If the prior session initialized,
+the bridge first repeats that initialization and sends `notifications/initialized`
+to the new backend. It releases the new request only when the negotiated protocol
+version and capabilities still match. A failed connection, failed handshake or
+five-second handshake timeout fails that request; a later request can try again.
+Notifications never open a connection. No timer reconnects an idle session.
+
+| Connection state | Event | Result |
+|---|---|---|
+| Disconnected | New request | One connect attempt; restore initialization when previously negotiated |
+| Disconnected | Notification or client response | Discard; no connection attempt |
+| Restoring | Matching initialization response | Send initialized notification, then the new request once |
+| Restoring | EOF, write failure, mismatch or timeout | Close backend; fail pending request; become disconnected |
+| Connected | Complete response | Forward complete JSON and retire its request ID |
+| Connected | Client cancellation | Forward cancellation and retire its request ID; MCP cancellation does not require a response |
+| Connected | EOF or I/O failure | Discard incomplete backend frame and unsent bytes; fail all pending IDs; become disconnected |
+| Any | Client stdin EOF or output failure | Exit and close the owned socket |
+
+Only initialization survives backend loss. Complete response frames already
+received remain deliverable; partial frames cannot contaminate the next response.
+The bridge bounds a JSON frame at 32 MiB, preserving attachment responses whose
+8 MiB source bytes expand past 11 MiB in JSON. Input/output backpressure bounds
+buffer growth; outstanding IDs belong only to their original backend connection.
+
+Replacing the installed executable does not update a bridge process already
+running in a client. A client using the old binary needs one fresh stdio MCP
+session after installation. Initialize that session and rediscover its tools.
+Re-registering configuration alone does not establish a new session. An already
+closed host transport cannot be revived by the bridge; use the host's supported
+fresh-session flow in that case.
 
 An interrupted send remains uncertain until its source state is inspected. Never
 replay it merely because a new session connected. An app restart also invalidates

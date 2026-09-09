@@ -600,3 +600,43 @@ short repository checkout path because the isolated worktree path exceeds the
 macOS Unix socket pathname limit. No source or runtime fix was made for that
 fixture-path constraint. Evidence is under the routing worktree's ignored
 `.scratch/automatic-routing/` directory.
+
+### App-restart connection recovery
+
+`Tests/Protocol/bridge_test.py` runs the production recovering relay as a separate
+process over real pipes and private Unix sockets. Its inert fault-injection
+servers cover idle app loss, an executed send with a lost response (one side
+effect, no replay), partial response JSON, complete response followed by a partial
+frame, loss during request writes, cancellation, stdin EOF during restoration,
+handshake timeout/mismatch/EOF, unavailable and unsafe endpoints, reused/string
+request IDs, and 12 MiB JSON in both directions. The frame test and handshake-EOF
+test first failed against the initial implementation and passed after incremental
+scanning and stdin lifetime handling were corrected.
+
+`Tests/Protocol/bridge_restart_test.py` runs the actual Swift MCP SDK fixture and
+synthetic SQLite store. It restarts that backend while retaining one stdio bridge
+process, discovers all ten tools again, rejects an old store-bound watch cursor,
+and interrupts an active watch before successfully restoring the next request.
+It also cancels 130 consecutive SDK watches and confirms later discovery, proving
+that cancellation retires pending IDs without waiting for a response.
+This checks transport restoration through the production SDK composition; fault
+injection owns the uncertain-send/no-replay proof.
+
+```sh
+swift build --product MCPTestServer
+swift build --product MCPBridgeTestClient
+PYTHONDONTWRITEBYTECODE=1 python3 Tests/Protocol/bridge_test.py
+PYTHONDONTWRITEBYTECODE=1 python3 Tests/Protocol/bridge_restart_test.py
+```
+
+The scripts accept `MESSAGES_MCP_TEST_SERVER` and
+`MESSAGES_BRIDGE_TEST_BINARY` for isolated build outputs. A deep worktree may set
+`MESSAGES_RESTART_TEST_SOCKET` to a short task-owned scratch path that fits the
+Unix socket pathname limit. Its two immediate parent directories must be private
+and dedicated to this test; the restart script removes its socket, lock and those
+directories after stopping its server.
+
+These tests do not restart the installed app, read real Messages or Contacts,
+send messages, or change permissions. The installed client must establish one
+fresh session to pick up an updated bridge binary; real app/client restart QA
+remains a separate integration check.

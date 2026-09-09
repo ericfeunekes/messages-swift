@@ -565,3 +565,38 @@ dispatch; one revalidated attempt succeeded. No contractor or group messages wer
 sent in this validation. A fresh native Codex client discovered all ten tools and
 used route preflight for a synthetic unknown number, receiving local iMessage/SMS
 options with no historical suggestion. This proves active calls, not idle wakeups.
+
+### Automatic transport boundary
+
+Synthetic automatic-routing tests exercise the shared operation against SQLite
+and the production AppleScript routing handler with inert boundary handlers.
+They cover history/RCS relay selection, no enabled route, email isolation,
+iMessage-first routing, one pre-dispatch alternative, negotiated RCS observation,
+explicit overrides, unchanged multipart payloads and no replay of successful
+parts. Source failure, pending, missing/competing rows, delayed success and
+conflicting delivery flags do not cause another attempt. The stdio MCP suite
+also sends successfully with service omitted and checks returned attempts.
+Disabling the alternative branch makes the negotiated-RCS test fail its status,
+attempt-route and observed-service assertions; restored source passes.
+
+Fresh synthetic file reads can acquire a later ctime update on this Mac even
+when inode, size and mtime stay fixed. Initial and changed xattr name lists both
+contained only `com.apple.provenance`; the writer of that metadata change is not
+established. Fixtures read their files and allow setup metadata to settle before
+production captures their identity. Production file guards are unchanged, and
+post-dispatch rewrite/replacement/deletion tests retain their original assertions.
+
+The public source error flags do not establish terminal non-send. In particular,
+an accepted iMessage attempt followed by error 22 remains a reported failure,
+without an automatic SMS replay. The available proof authorizes alternatives
+only when the AppleScript handler reports route failure before dispatch begins.
+This does not complete automatic recovery for a new Android number whose
+submission is accepted first. No live send, native UI operation, installation
+or OS permission change is part of these tests.
+
+The September 9 final synthetic run passed 156 XCTest and 44 Swift Testing
+cases, and all nine send MCP checks. The compiled test bundle ran from the
+short repository checkout path because the isolated worktree path exceeds the
+macOS Unix socket pathname limit. No source or runtime fix was made for that
+fixture-path constraint. Evidence is under the routing worktree's ignored
+`.scratch/automatic-routing/` directory.

@@ -33,7 +33,7 @@ public struct ResolveSendRouteResult: Codable, Sendable, Equatable {
         self.contactCandidates = contactCandidates; self.handleCandidates = handleCandidates
     }
 }
-public enum SendRouteError: String, Error, Sendable { case accountDiscoveryFailed = "route_account_discovery_failed" }
+public enum SendRouteError: String, Error, Sendable { case accountDiscoveryFailed = "route_account_discovery_failed"; case noAvailableService = "messages_no_available_service" }
 
 /// `submitted` is only a successful public Automation command. `sent`,
 /// `pending`, and `failed` require a uniquely matched outgoing source row; attribution remains inferred.
@@ -69,6 +69,10 @@ public struct SendDestination: Codable, Sendable, Equatable {
     public let service: String?
     public let recipients: [Participant]
 }
+public struct SendAttemptResult: Codable, Sendable, Equatable {
+    public let service: String?
+    public let part: SendPartResult
+}
 public struct SendMessageResult: Codable, Sendable, Equatable {
     public var status: SendStatus
     public var delivery: String
@@ -76,6 +80,7 @@ public struct SendMessageResult: Codable, Sendable, Equatable {
     public let contactCandidates: [ContactCandidate]
     public let handleCandidates: [String]
     public var parts: [SendPartResult]
+    public var attempts: [SendAttemptResult] = []
     public var errorCode: String?
 }
 public enum SendValidationError: String, Error, Sendable {

@@ -66,6 +66,8 @@ private final class StatusRecordingSender: MessagesSending, @unchecked Sendable 
         case sent(delivered: Bool)
         case duplicate
         case delayedDuplicate
+        case delayedSent
+        case conflictingDelivery
         case groupOnlySent
         case absent
     }
@@ -100,6 +102,19 @@ private final class StatusRecordingSender: MessagesSending, @unchecked Sendable 
                 try? await Task.sleep(for: .milliseconds(150))
                 Self.insert(database: database, text: text, sent: 0, delivered: 0, error: 22, guid: secondGUID)
             }
+        case .delayedSent:
+            let guid = nextGUID("delayed")
+            Self.insert(database: database, text: text, sent: 0, delivered: 0, error: 0, guid: guid)
+            let database = database
+            Task {
+                try? await Task.sleep(for: .milliseconds(150))
+                var handle: OpaquePointer?
+                guard sqlite3_open(database.path, &handle) == SQLITE_OK else { XCTFail("Fixture open failed"); return }
+                defer { sqlite3_close(handle) }
+                XCTAssertEqual(sqlite3_exec(handle, "UPDATE message SET is_sent=1 WHERE guid='\(guid)'", nil, nil, nil), SQLITE_OK)
+            }
+        case .conflictingDelivery:
+            Self.insert(database: database, text: text, sent: 0, delivered: 1, error: 22, guid: nextGUID("conflict"))
         case .groupOnlySent:
             Self.insert(database: database, text: text, sent: 1, delivered: 1, error: 0, guid: nextGUID("group-only"), chatID: 2)
         }
@@ -247,6 +262,11 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
     private func localFile(_ name: String, contents: String = "fixture") throws -> URL {
         let url = root.appendingPathComponent(name)
         try Data(contents.utf8).write(to: url)
+        // macOS updates fresh fixture metadata asynchronously. Finish fixture
+        // setup before taking the production identity snapshot; mutation tests
+        // still change files after dispatch and exercise the unchanged guard.
+        _ = try Data(contentsOf: url)
+        Thread.sleep(forTimeInterval: 0.5)
         return url
     }
 
@@ -487,7 +507,6 @@ final class SendOperationsTests: XCTestCase, @unchecked Sendable {
         let invalid = [
             SendMessageInput(chatID: "chat-direct-guid", recipients: [.init(query: "Alice")], text: "x"),
             SendMessageInput(recipients: [.init(query: "Alice"), .init(query: "Alice")], service: "iMessage", text: "x"),
-            SendMessageInput(recipients: [.init(query: "Alice")], text: "x"),
             SendMessageInput(recipients: [.init(query: "Alice")], service: "iMessage"),
             SendMessageInput(recipients: [.init(query: "Alice")], service: "iMessage", text: "\0")
         ]
@@ -811,12 +830,10 @@ extension SendOperationsTests {
         _ = try await ops.sendMessage(.init(chatID: "chat-direct-guid", service: route.suggestedService, text: "approved synthetic text"), now: now)
         let calls = await sender.dispatchedTargets()
         XCTAssertEqual(calls, [.individual(handle: "+15550000001", service: "SMS")])
-        do {
-            _ = try await ops.sendMessage(.init(chatID: "chat-direct-guid", text: "no frozen service"), now: now)
-            XCTFail("Direct sending must require the previewed service")
-        } catch let error as SendValidationError { XCTAssertEqual(error, .invalidDestination) }
+        _ = try await ops.sendMessage(.init(chatID: "chat-direct-guid", text: "automatic service"), now: now)
         let finalCalls = await sender.dispatchedTargets()
-        XCTAssertEqual(finalCalls.count, 1)
+        XCTAssertEqual(finalCalls.last, .individual(handle: "+15550000001", service: "iMessage"))
+        XCTAssertEqual(finalCalls.count, 2)
     }
 
     func testRouteNewerFailedPendingAndConflictedAttemptsSuppressOldSuccess() async throws {
@@ -883,5 +900,134 @@ extension SendOperationsTests {
             _ = try await ops.sendMessage(.init(chatID: "chat-group-guid", service: "SMS", text: "invalid override"), now: now)
             XCTFail("Group identity must not become an individual send")
         } catch let error as SendValidationError { XCTAssertEqual(error, .invalidDestination) }
+    }
+}
+
+/// Executes the production routing handler in AppleScript, replacing only the
+/// Messages boundary with inert handlers. SQLite owns post-dispatch observation.
+private actor AutomaticFixtureSender: MessagesSending, MessagesRouteDiscovering {
+    let services: [String]
+    let source: StatusRecordingSender
+    let databaseURL: URL
+    let unavailableCalls: Set<Int>
+    var calls: [(SendTarget, SendPayload)] = []
+    init(database: URL, services: [String] = ["iMessage", "SMS"], mode: StatusRecordingSender.Mode = .sent(delivered: false), unavailableCalls: Set<Int> = []) {
+        self.services = services
+        databaseURL = database
+        source = StatusRecordingSender(database: database, mode: mode)
+        self.unavailableCalls = unavailableCalls
+    }
+    func availableServices() async throws -> [String] { services }
+    func send(target: SendTarget, payload: SendPayload) async -> SendDispatchOutcome {
+        calls.append((target, payload))
+        let unavailable = unavailableCalls.contains(calls.count)
+        let handlers = """
+        on enabledAccounts(serviceName)
+            return {"inert-account"}
+        end enabledAccounts
+        on directTarget(handleValue, targetAccount)
+            \(unavailable ? "error number -1728" : "return handleValue")
+        end directTarget
+        on dispatchPayload(payloadKind, payloadValue, targetReference)
+            return "inert"
+        end dispatchPayload
+        """
+        let outcome = AppleScriptExecutor(source: MessagesScriptingScript.routingBody + "\n" + handlers).execute(arguments: MessagesScriptingScript.arguments(target: target, payload: payload))
+        guard outcome == .accepted else { return outcome }
+        let submitted = await source.send(target: target, payload: payload)
+        if case .individual(_, "SMS") = target {
+            var database: OpaquePointer?
+            guard sqlite3_open(databaseURL.path, &database) == SQLITE_OK else { XCTFail("Fixture database unavailable"); return .unknown }
+            defer { sqlite3_close(database) }
+            XCTAssertEqual(sqlite3_exec(database, "UPDATE message SET service='RCS' WHERE ROWID=(SELECT MAX(ROWID) FROM message)", nil, nil, nil), SQLITE_OK)
+        }
+        return submitted
+    }
+    func dispatches() -> [(SendTarget, SendPayload)] { calls }
+}
+
+extension SendOperationsTests {
+    func testAutomaticHistorySelectsRelayAndExplicitOverrideDisablesAlternative() async throws {
+        let sender = RouteAvailabilitySender()
+        let ops = try fixture([], sender: sender)
+        try sql("UPDATE message SET is_from_me=1,is_sent=1,error=0,service='RCS' WHERE ROWID=1")
+        let result = try await ops.sendMessage(.init(chatID: "chat-direct-guid", text: "synthetic"), now: now)
+        XCTAssertEqual(result.attempts.map(\.service), ["SMS"])
+        let calls = await sender.dispatchedTargets()
+        XCTAssertEqual(calls, [.individual(handle: "+15550000001", service: "SMS")])
+    }
+
+    func testAutomaticNewPhoneUsesInertPredispatchFailureThenOneRelayAttempt() async throws {
+        let sender = AutomaticFixtureSender(database: root.appendingPathComponent("chat.db"), unavailableCalls: [1, 2])
+        let ops = try fixture([], sender: sender)
+        let result = try await ops.sendMessage(.init(recipients: [.init(query: "+15550009999")], text: "synthetic exact body"), now: now)
+        XCTAssertEqual(result.status, .failed)
+        XCTAssertEqual(result.attempts.map(\.service), ["iMessage", "SMS"])
+        XCTAssertEqual(result.attempts.map { $0.part.errorCode }, ["messages_route_unavailable", "messages_route_unavailable"])
+        let calls = await sender.dispatches()
+        XCTAssertEqual(calls.count, 2)
+        XCTAssertEqual(calls[0].1, calls[1].1)
+        XCTAssertEqual(calls[1].0, .individual(handle: "+15550009999", service: "SMS"))
+    }
+
+    func testAutomaticPredispatchAlternativeObservesNegotiatedRCSSuccess() async throws {
+        let sender = AutomaticFixtureSender(database: root.appendingPathComponent("chat.db"), unavailableCalls: [1])
+        let ops = try fixture([], sender: sender)
+        let result = try await ops.sendMessage(.init(recipients: [.init(query: "+15550000001")], text: "synthetic"), now: now)
+        XCTAssertEqual(result.status, .sent)
+        XCTAssertEqual(result.attempts.map(\.service), ["iMessage", "SMS"])
+        XCTAssertEqual(result.parts.first?.observedService, "RCS")
+    }
+
+    func testAutomaticLocalServiceAbsenceSkipsProbeAndEmailNeverUsesRelay() async throws {
+        let sender = RouteAvailabilitySender(["SMS"])
+        let ops = try fixture([], sender: sender)
+        let result = try await ops.sendMessage(.init(recipients: [.init(query: "+15550009999")], text: "synthetic"), now: now)
+        XCTAssertEqual(result.attempts.map(\.service), ["SMS"])
+        do {
+            _ = try await ops.sendMessage(.init(recipients: [.init(query: "new@example.test")], text: "synthetic"), now: now)
+            XCTFail("Email cannot use SMS")
+        } catch let error as SendRouteError { XCTAssertEqual(error, .noAvailableService) }
+        let empty = try fixture([], sender: RouteAvailabilitySender([]))
+        do {
+            _ = try await empty.sendMessage(.init(recipients: [.init(query: "+15550009999")], text: "synthetic"), now: now)
+            XCTFail("No account must fail without a probe")
+        } catch let error as SendRouteError { XCTAssertEqual(error, .noAvailableService) }
+    }
+
+    func testAutomaticSourceFailurePendingMissingAndCompetingRowsNeverFallback() async throws {
+        for (mode, expected) in [(StatusRecordingSender.Mode.failed(22), SendStatus.failed), (.failed(0), .pending), (.absent, .unknown), (.duplicate, .unknown), (.delayedDuplicate, .unknown), (.delayedSent, .sent), (.conflictingDelivery, .unknown), (.sent(delivered: false), .sent)] {
+            let sender = AutomaticFixtureSender(database: root.appendingPathComponent("chat.db"), mode: mode)
+            let ops = try fixture([], sender: sender)
+            let result = try await ops.sendMessage(.init(chatID: "chat-direct-guid", text: "synthetic"), now: now)
+            XCTAssertEqual(result.status, expected)
+            XCTAssertEqual(result.attempts.count, 1)
+            let calls = await sender.dispatches()
+            XCTAssertEqual(calls.count, 1)
+        }
+    }
+
+    func testAutomaticMultipartAlternativeNeverReplaysSuccessfulText() async throws {
+        let sender = AutomaticFixtureSender(database: root.appendingPathComponent("chat.db"), unavailableCalls: [2, 3])
+        let ops = try fixture([], sender: sender)
+        let file = try localFile("synthetic.txt")
+        let result = try await ops.sendMessage(.init(chatID: "chat-direct-guid", text: "synthetic", files: [file.path, file.path]), now: now)
+        XCTAssertEqual(result.status, .partial)
+        XCTAssertEqual(result.parts.map(\.outcome), [.sent, .failed, .notAttempted])
+        XCTAssertEqual(result.attempts.map { $0.part.index }, [0, 1, 1])
+        let calls = await sender.dispatches()
+        XCTAssertEqual(calls.count, 3)
+        guard calls.count == 3 else { return }
+        XCTAssertEqual(calls[1].1, calls[2].1)
+    }
+
+    func testExplicitServiceAndEmailDisablePredispatchAlternative() async throws {
+        for input in [SendMessageInput(chatID: "chat-direct-guid", service: "iMessage", text: "synthetic"), .init(recipients: [.init(query: "new@example.test")], text: "synthetic")] {
+            let sender = AutomaticFixtureSender(database: root.appendingPathComponent("chat.db"), unavailableCalls: [1])
+            let ops = try fixture([], sender: sender)
+            let result = try await ops.sendMessage(input, now: now)
+            XCTAssertEqual(result.attempts.count, 1)
+            XCTAssertEqual(result.status, .failed)
+        }
     }
 }

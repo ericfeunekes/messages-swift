@@ -71,7 +71,6 @@ async def checks(client, initialization):
     for args, code in [
         ({"text": "x"}, "invalid_send_destination"),
         ({"chatID": "chat-direct", "recipients": [{"query": "Alice"}], "text": "x"}, "invalid_send_destination"),
-        ({"chatID": "chat-direct", "text": "x"}, "invalid_send_destination"),
         ({"chatID": "chat-group", "service": "iMessage", "text": "x"}, "invalid_send_destination"),
         ({"chatID": "chat-direct"}, "invalid_send_content"),
         ({"chatID": "missing", "text": "x"}, "chat_not_found"),
@@ -92,6 +91,10 @@ async def checks(client, initialization):
     files = [base.STATE_DIRECTORY / "α quoted ' one.txt", base.STATE_DIRECTORY / 'two " file.txt']
     for index, path in enumerate(files):
         path.write_text(f"Synthetic file {index}\n", encoding="utf-8")
+    # Let macOS finish fresh-file metadata before production captures identity.
+    for path in files:
+        path.read_bytes()
+    await asyncio.sleep(0.5)
     text = 'Synthetic “hello” 👨‍👩‍👧‍👦\n"quoted" \\ path; do shell script "false"'
     result = base.content(await client.call_tool("send_message", {
         "chatID": "chat-group", "text": text, "files": [str(path) for path in files]
@@ -108,6 +111,14 @@ async def checks(client, initialization):
         assert staged.name == original.name and staged.read_bytes() == original.read_bytes()
     assert Path(calls[1]["value"]).parent.parent == Path(calls[2]["value"]).parent.parent
     base.record("exact existing group plus Unicode text and multi-file ordering")
+
+    automatic = base.content(await client.call_tool("send_message", {
+        "chatID": "chat-direct", "text": "automatic synthetic message"
+    }))
+    assert automatic["status"] == "sent"
+    assert automatic["attempts"][0]["service"] == "iMessage"
+    assert automatic["attempts"][0]["part"]["outcome"] == "sent"
+    base.record("automatic transport without route preflight or service at MCP boundary")
 
     direct = base.content(await client.call_tool("send_message", {
         "recipients": [{"query": "new@example.test"}], "service": "iMessage", "text": "new synthetic"
@@ -131,6 +142,8 @@ async def checks(client, initialization):
     for marker, expected, part in [("fixture-unknown", "unknown", "unknown"), ("fixture-rejected", "partial", "failed")]:
         stopping = base.STATE_DIRECTORY / f"{marker}.txt"
         stopping.write_text("Synthetic failure injection\n")
+        stopping.read_bytes()
+        await asyncio.sleep(0.5)
         before = len(log.read_text().splitlines())
         result = base.content(await client.call_tool("send_message", {
             "chatID": "chat-direct", "service": "iMessage", "text": "first accepted", "files": [str(stopping), str(files[0])]

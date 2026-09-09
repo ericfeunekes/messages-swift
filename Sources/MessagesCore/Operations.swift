@@ -30,7 +30,8 @@ public actor MessagesOperations {
         // Validate the whole batch before any command can leave this process.
         let files = try input.files.map { try OutgoingFile(path: $0) }
         let people = try preparedPeople(now: now)
-        let target: SendTarget
+        var target: SendTarget
+        var alternative: SendTarget?
         let destination: SendDestination
         if let chatID = input.chatID {
             guard let chat = try store.chat(id: ChatID(rawValue: chatID)) else { throw OperationError.unknownChat(chatID) }
@@ -40,21 +41,33 @@ public actor MessagesOperations {
                 target = .individual(handle: directHandle, service: service)
                 destination = .init(chatID: chatID, service: service, recipients: [participant(directHandle, people: people)!])
             } else {
-                guard directHandle == nil else { throw SendValidationError.invalidDestination }
-                target = .chat(chatID)
-                destination = .init(chatID: chatID, service: chat.service, recipients: enrich(chat, people: people).participants)
+                if let directHandle {
+                    let routes = try await automaticRoutes(chatID: chatID, handle: directHandle)
+                    target = routes.0; alternative = routes.1
+                    destination = .init(chatID: chatID, service: routes.2, recipients: [participant(directHandle, people: people)!])
+                } else {
+                    target = .chat(chatID)
+                    destination = .init(chatID: chatID, service: chat.service, recipients: enrich(chat, people: people).participants)
+                }
             }
             try cacheUsed(people, handles: chat.participants, now: now)
         } else {
-            guard let recipients = input.recipients, recipients.count == 1,
-                  let service = input.service, ["iMessage", "SMS", "RCS"].contains(service) else { throw SendValidationError.invalidDestination }
+            guard let recipients = input.recipients, recipients.count == 1 else { throw SendValidationError.invalidDestination }
             let (handles, candidates) = try resolvedSendRecipient(recipients[0], people: people)
             if !candidates.isEmpty || handles.count != 1 {
                 return .init(status: .needsChoice, delivery: "unconfirmed", destination: nil,
                              contactCandidates: candidates, handleCandidates: handles, parts: parts)
             }
             guard let handle = handles.first, Self.isExplicitSendHandle(handle) else { throw SendValidationError.invalidDestination }
-            target = .individual(handle: handle, service: service)
+            let service: String
+            if let override = input.service {
+                guard ["iMessage", "SMS", "RCS"].contains(override) else { throw SendValidationError.invalidDestination }
+                service = override
+                target = .individual(handle: handle, service: service)
+            } else {
+                let routes = try await automaticRoutes(chatID: nil, handle: handle)
+                target = routes.0; alternative = routes.1; service = routes.2
+            }
             destination = .init(chatID: nil, service: service, recipients: [participant(handle, people: people)!])
             try cacheUsed(people, handles: [handle], now: now)
         }
@@ -71,42 +84,70 @@ public actor MessagesOperations {
                 result.errorCode = "send_cancelled"
                 break
             }
-            guard files.allSatisfy({ $0.isUnchanged() }) else {
-                result.parts[index].outcome = .failed
-                result.parts[index].errorCode = "send_file_changed"
-                break
-            }
             let payload: SendPayload
             if let fileIndex = result.parts[index].fileIndex { payload = .file(staged.paths[fileIndex]) }
             else { payload = .text(input.text!) }
-            let fence = try store.outgoingMatchFence()
-            let outcome = await sender.send(target: target, payload: payload)
-            if let fileIndex = result.parts[index].fileIndex, outcome == .accepted || outcome == .unknown {
-                staged.retain(index: fileIndex)
-            }
-            switch outcome {
-            case .accepted:
-                let expectedService: String? = if case .individual = target { destination.service } else { nil }
-                await applyObservedStatus(after: fence, target: target, expectedService: expectedService, payload: payload, to: &result.parts[index])
-            case .unavailable:
-                result.parts[index].outcome = .failed
-                result.parts[index].errorCode = "messages_route_unavailable"
-            case .rejected:
-                result.parts[index].outcome = .failed
-                result.parts[index].errorCode = "messages_rejected"
-            case .unknown:
-                result.parts[index].outcome = .unknown
-                result.parts[index].errorCode = "messages_outcome_unknown"
-            }
+            repeat {
+                guard files.allSatisfy({ $0.isUnchanged() }) else {
+                    result.parts[index].outcome = .failed
+                    result.parts[index].errorCode = "send_file_changed"
+                    break
+                }
+                let fence = try store.outgoingMatchFence()
+                let outcome = await sender.send(target: target, payload: payload)
+                if let fileIndex = result.parts[index].fileIndex, outcome == .accepted || outcome == .unknown {
+                    staged.retain(index: fileIndex)
+                }
+                switch outcome {
+                case .accepted:
+                    let expectedService: String? = if case let .individual(_, service) = target { service } else { nil }
+                    await applyObservedStatus(after: fence, target: target, expectedService: expectedService, payload: payload, to: &result.parts[index])
+                case .unavailable:
+                    result.parts[index].outcome = .failed
+                    result.parts[index].errorCode = "messages_route_unavailable"
+                case .rejected:
+                    result.parts[index].outcome = .failed
+                    result.parts[index].errorCode = "messages_rejected"
+                case .unknown:
+                    result.parts[index].outcome = .unknown
+                    result.parts[index].errorCode = "messages_outcome_unknown"
+                }
+                let attemptedService: String? = if case let .individual(_, service) = target { service } else { destination.service }
+                result.attempts.append(.init(service: attemptedService, part: result.parts[index]))
+                // Only route lookup failure is proven to precede dispatch. Source error
+                // flags do not establish terminal non-send; never replay those rows.
+                if outcome == .unavailable, let next = alternative, !Task.isCancelled {
+                    target = next
+                    alternative = nil
+                    result.parts[index].outcome = .notAttempted
+                    result.parts[index].errorCode = nil
+                    continue
+                }
+                break
+            } while true
             if result.parts[index].errorCode == "send_cancelled" { result.errorCode = "send_cancelled"; break }
-            if outcome != .accepted || result.parts[index].outcome == .failed || result.parts[index].outcome == .unknown { break }
+            if result.parts[index].outcome == .failed || result.parts[index].outcome == .unknown { break }
         }
         result.status = aggregateSendStatus(result.parts)
         if result.status == .sent && result.parts.allSatisfy({ $0.isDelivered == true }) { result.delivery = "provider_reported" }
         return result
     }
 
-    /// Resolves the service before the caller previews and freezes it for sending.
+    private func automaticRoutes(chatID: String?, handle: String) async throws -> (SendTarget, SendTarget?, String) {
+        let services = try await discoveredServices()
+        let phone = !handle.contains("@")
+        let history = try store.latestRouteHistory(chatID: chatID, handle: chatID == nil ? handle : nil)
+        let historical = history.service == "RCS" ? "SMS" : history.service
+        let preferred = historical.flatMap { services.contains($0) && (phone || $0 == "iMessage") ? $0 : nil }
+        guard let service = preferred ?? (services.contains("iMessage") ? "iMessage" : (phone && services.contains("SMS") ? "SMS" : nil)) else {
+            throw SendRouteError.noAvailableService
+        }
+        let alternative: SendTarget? = phone && service == "iMessage" && services.contains("SMS")
+            ? .individual(handle: handle, service: "SMS") : nil
+        return (.individual(handle: handle, service: service), alternative, service)
+    }
+
+    /// Optional read-only route diagnostics; normal sends select their own route.
     public func resolveSendRoute(_ input: ResolveSendRouteInput, now: Date = Date()) async throws -> ResolveSendRouteResult {
         guard (input.chatID == nil) != (input.recipients == nil),
               input.chatID.map({ !$0.isEmpty && !$0.utf8.contains(0) }) ?? true else { throw SendValidationError.invalidDestination }
@@ -207,7 +248,10 @@ public actor MessagesOperations {
         part.deliveryErrorCode = observed.deliveryErrorCode
         part.observedService = observed.service
         part.correlation = "unique_source_match"
-        if observed.isSent == true {
+        if observed.isDelivered == true && observed.isSent != true {
+            part.outcome = .unknown
+            part.errorCode = "messages_conflicting_provider_status"
+        } else if observed.isSent == true {
             if let error = observed.deliveryErrorCode, error != 0 {
                 part.outcome = .unknown
                 part.errorCode = "messages_conflicting_provider_status"

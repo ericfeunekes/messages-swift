@@ -14,7 +14,7 @@ exclusive. Limits default to 50 and range from 1 through 100.
 | `read_messages` | Required `chatID`; `dateRange`, `unreadOnly`, `limit`, optional `cursor` |
 | `search_messages` | Required nonempty `query`; optional `chatID`; `participants`, `membership`, `dateRange`, `unreadOnly`, `limit`, optional `cursor` |
 | `resolve_send_route` | Exactly one of `chatID` or `recipients` (one name, source identity or explicit handle); no content and no dispatch |
-| `send_message` | Exactly one of `chatID` or `recipients` (one participant selector); `service` required for direct chats and recipients, forbidden for groups (`iMessage`, `SMS`, `RCS`); optional nonempty `text`; `files` defaults to `[]` (absolute local file paths); text or files required |
+| `send_message` | Exactly one of `chatID` or `recipients` (one participant selector); `service` optional advanced override for direct chats and recipients, forbidden for groups (`iMessage`, `SMS`, `RCS`); optional nonempty `text`; `files` defaults to `[]` (absolute local file paths); text or files required |
 | `set_chat_alias` | Required `chatID` and `alias`; string sets/replaces this chat's alias, null removes it |
 | `read_image` | Required nonempty `messageID` and `attachmentID` from history/search; no path or rendering options |
 | `read_attachment` | Required nonempty `messageID` and `attachmentID` from history/search; no path |
@@ -148,7 +148,7 @@ these fields within a bounded window as described below.
 ## Sending
 
 `resolve_send_route` is read-only and resolves the same one destination selector
-before preview: an exact chat or one recipient. It returns enabled local service
+for optional diagnostics: an exact chat or one recipient. Normal sends do not require this preflight. It returns enabled local service
 options and a suggestion only when the newest outgoing direct-history row is a
 successful current hint. There is no public recipient-capability query: a new
 number with no usable history has options but no suggestion. A newer failed,
@@ -156,12 +156,16 @@ pending, or conflicting row suppresses an older successful suggestion. SMS/RCS
 history suggests the SMS account, which may negotiate RCS. The result is never a
 delivery or capability guarantee.
 
-For `send_message`, an existing direct chat requires the explicitly selected,
-previewed service and is sent to its sole verified participant through that
-account. Groups retain their exact chat route and forbid a service override. A
+For `send_message`, omit `service` for automatic routing to the sole verified
+participant. The operation reuses available accounts and the newest successful
+route hint, mapping RCS history to SMS relay. Without a usable hint, phone
+numbers prefer available iMessage, then SMS; email requires iMessage.
+No enabled eligible service returns `messages_no_available_service` before
+submission. Explicit `service` remains a compatibility override and disables
+alternatives. Groups retain their exact chat route and forbid a service override. A
 label is never a chat ID.
 `recipients` contains exactly one selector for an individual, including a new
-individual. It requires an explicit service in the confirmed preview. Multiple
+individual. Approval covers the exact recipient, content and files. Multiple
 recipients do not create a new group. An explicit full phone number or email
 selects that handle without expanding to other addresses on its contact. A name
 or source identity with multiple handles returns choices. Names resolve only
@@ -170,7 +174,10 @@ against the selected Contacts source; duplicate names remain separate candidates
 The result has `status`, `delivery` (`provider_reported` only when every sent part has a
 true source delivery flag; otherwise `unconfirmed`). This is Messages reporting
 delivery, not an independent recipient acknowledgment. Other fields include optional `destination`,
-`contactCandidates`, `handleCandidates`, `parts` and optional `errorCode`.
+`contactCandidates`, `handleCandidates`, `parts`, `attempts` and optional `errorCode`.
+Each attempt contains the selected `service` and a snapshot of its `part` outcome,
+in dispatch order. The destination service describes the initial route; attempts
+and each observed service describe the actual routes.
 `destination` reports an optional `chatID`, service and recipients. A
 `needs_choice` result sends nothing; choose the contact/handle and obtain a revised
 preview confirmation. Validation failures use the normal error envelope with
@@ -197,7 +204,17 @@ error code and no invented source row. A successful scripting command without a 
 is `unknown`; it is never described as sent. Aggregate `failed` and `partial`
 are MCP tool errors, while an uncertain result is not retried.
 Concurrent batches return `send_in_progress` without dispatch; no automatic
-retry, duplicate send, new-group creation or service switching occurs.
+retry, duplicate send or new-group creation occurs. Automatic routing permits
+at most one iMessage-to-SMS alternative for a phone number, only on
+`messages_route_unavailable`: the shared AppleScript handler establishes that
+route lookup failed before dispatch began. It retries only that unsubmitted part
+with the identical payload and uses the alternative for remaining parts.
+Successful and pending parts are never replayed. Permission/validation rejection,
+unknown submission, absent/ambiguous status, pending rows and source errors never
+trigger an alternative. In particular, source error 22 has no established public
+terminal non-send contract; its reported failure does not authorize a duplicate.
+This is a limitation for new Android numbers whose iMessage submission is accepted
+before failing in the source.
 
 All files must be readable regular files before the first command. Relative
 paths, final-component symlinks, directories, missing files and NUL strings are

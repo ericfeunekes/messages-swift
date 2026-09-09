@@ -8,7 +8,7 @@ public enum MCPServerRunner {
     }
 
     public static func run(operations: MessagesOperations, transport: any Transport) async throws {
-        let server = Server(name: "messages-swift", version: "0.1.0", instructions: "Read and search local Messages with selected Contacts names, local aliases and message-bound images/files. Ambiguous contacts require a choice. Drafting never calls send_message. Before every send, even an initial request saying send, show the resolved recipients, service, exact text and files and obtain confirmation. An unchanged confirmed preview needs no second conversational confirmation; any change requires a revised preview. The client approves the invocation. Never retry an uncertain or partial send automatically. Accepted means accepted by Messages, not delivered. Attachment tools return bounded image views or complete original file bytes; errors do not deliver a file. Decoding diagnostics mean search coverage is incomplete. Never interpret a cached label as a send destination.", capabilities: .init(tools: .init()))
+        let server = Server(name: "messages-swift", version: "0.1.0", instructions: "Read, search and count local Messages with selected Contacts names, local aliases and message-bound images/files. Ambiguous contacts require a choice. Drafting never calls send_message. Before every send, even an initial request saying send, show the resolved recipients, service, exact text and files and obtain confirmation. An unchanged confirmed preview needs no second conversational confirmation; any change requires a revised preview. The client approves the invocation. Never retry an uncertain or partial send automatically. Accepted means accepted by Messages, not delivered. Attachment tools return bounded image views or complete original file bytes; errors do not deliver a file. Decoding diagnostics mean search coverage is incomplete. Never interpret a cached label as a send destination.", capabilities: .init(tools: .init()))
         let tools = ToolSchemas.tools
         await server.withMethodHandler(ListTools.self) { _ in .init(tools: tools) }
         await server.withMethodHandler(CallTool.self) { params in
@@ -18,20 +18,33 @@ public enum MCPServerRunner {
             let arguments = Value.object(params.arguments ?? [:])
             try ToolSchemas.validate(arguments, against: tool.inputSchema)
             var fields = params.arguments ?? [:]
-            if ["find_chats", "read_messages", "search_messages"].contains(params.name) {
+            if ["find_chats", "read_messages", "search_messages", "count_message_activity"].contains(params.name) {
                 fields["dateRange"] = fields["dateRange"] ?? .object([:])
                 fields["unreadOnly"] = fields["unreadOnly"] ?? false
                 fields["limit"] = fields["limit"] ?? 50
             }
-            if params.name == "find_chats" || params.name == "search_messages" {
+            if params.name == "find_chats" || params.name == "search_messages" || params.name == "count_message_activity" {
                 fields["participants"] = fields["participants"] ?? .array([])
                 fields["membership"] = fields["membership"] ?? "contains_all"
             }
             if params.name == "send_message" { fields["files"] = fields["files"] ?? .array([]) }
+            if params.name == "count_message_activity" {
+                fields["groupBy"] = fields["groupBy"] ?? "overall"
+                fields["bucket"] = fields["bucket"] ?? "none"
+                fields["ranking"] = fields["ranking"] ?? "chronological"
+            }
             let data = try JSONEncoder().encode(Value.object(fields))
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .custom { decoder in
                 let value = try decoder.singleValueContainer().decode(String.self)
+                if params.name == "count_message_activity" {
+                    guard value.range(of: #"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})$"#, options: .regularExpression) != nil else {
+                        throw MCPError.invalidParams("Dates must be ISO-8601 strings with an offset")
+                    }
+                    if let date = try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(value) { return date }
+                    if let date = try? Date.ISO8601FormatStyle().parse(value) { return date }
+                    throw MCPError.invalidParams("Dates must be ISO-8601 strings with an offset")
+                }
                 let formatter = ISO8601DateFormatter()
                 formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
                 if let date = formatter.date(from: value) { return date }
@@ -55,6 +68,8 @@ public enum MCPServerRunner {
                     return try encode(await operations.readMessages(decoder.decode(ReadMessagesInput.self, from: data)))
                 case "search_messages":
                     return try encode(await operations.searchMessages(decoder.decode(SearchMessagesInput.self, from: data)))
+                case "count_message_activity":
+                    return try encode(await operations.countMessageActivity(decoder.decode(CountMessageActivityInput.self, from: data)), preciseDates: true)
                 default:
                     return try encode(await operations.setChatAlias(decoder.decode(SetChatAliasInput.self, from: data)))
                 }
@@ -95,9 +110,20 @@ public enum MCPServerRunner {
         return try .init(content: metadata.content + [payload], structuredContent: metadata.structuredContent, isError: false)
     }
 
-    private static func encode<T: Encodable>(_ object: T, isError: Bool = false) throws -> CallTool.Result {
+    private static func encode<T: Encodable>(_ object: T, isError: Bool = false, preciseDates: Bool = false) throws -> CallTool.Result {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
+        if preciseDates {
+            encoder.dateEncodingStrategy = .custom { date, encoder in
+                let reference = date.timeIntervalSinceReferenceDate
+                let seconds = floor(reference)
+                let fraction = Int64(((reference - seconds) * 1_000_000).rounded())
+                let whole = ISO8601DateFormatter().string(from: Date(timeIntervalSinceReferenceDate: seconds + Double(fraction / 1_000_000)))
+                let value = String(whole.dropLast()) + String(format: ".%06lldZ", fraction % 1_000_000)
+                var container = encoder.singleValueContainer()
+                try container.encode(value)
+            }
+        }
         encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(object)
         let value = try JSONDecoder().decode(Value.self, from: data)
@@ -108,6 +134,12 @@ public enum MCPServerRunner {
         // Each domain owns its errors; never emit raw errors containing paths or private values.
         if let error = error as? AttachmentReadError { return error.rawValue }
         if let error = error as? SendValidationError { return error.rawValue }
+        if let error = error as? ActivityError {
+            switch error {
+            case .invalidTimeZone: return "invalid_time_zone"
+            case .continuationInvalidated: return "activity_changed_restart_required"
+            }
+        }
         if let error = error as? ContactsDirectoryError {
             switch error {
             case .permissionNotGranted: return "contacts_permission_not_granted"

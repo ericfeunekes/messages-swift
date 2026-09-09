@@ -23,6 +23,12 @@ enum ToolSchemas {
         Tool(name: "find_chats", description: "Find enriched conversations by name, handle, alias or participant membership. Ambiguous people return candidates. Repeat filters with cursor.", inputSchema: object(common.merging(discovery) { _, new in new }.merging(["query": string]) { _, new in new }), annotations: .init(readOnlyHint: true, openWorldHint: false)),
         Tool(name: "read_messages", description: "Read one exact chat GUID, newest first. Ordinary messages and typed events are separate; check decoding diagnostics. Repeat filters with cursor.", inputSchema: object(common.merging(["chatID": string]) { _, new in new }, required: ["chatID"]), annotations: .init(readOnlyHint: true, openWorldHint: false)),
         Tool(name: "search_messages", description: "Search readable bodies with canonical case-insensitive whole-Character matching. Participant filters select whole chats. Diagnostics indicate incomplete coverage. Repeat filters with cursor.", inputSchema: object(common.merging(discovery) { _, new in new }.merging(["query": string, "chatID": string]) { _, new in new }, required: ["query"]), annotations: .init(readOnlyHint: true, openWorldHint: false)),
+        Tool(name: "count_message_activity", description: "Count user messages, excluding retracted messages and reactions/previews/unknown events. Overall deduplicates messages across chats. Calendar buckets use the reported time zone and Monday weeks. Ranking orders chats by whole-range counts, retaining chronological buckets. Defaults to the Mac time zone on the first request. Repeat inputs with cursor.", inputSchema: object(common.merging(discovery) { _, new in new }.merging([
+            "chatID": string, "timeZone": string,
+            "groupBy": ["type": "string", "enum": ["overall", "chat"]],
+            "bucket": ["type": "string", "enum": ["none", "day", "week", "month"]],
+            "ranking": ["type": "string", "enum": ["chronological", "total", "sent", "received"]],
+        ]) { _, new in new }), annotations: .init(readOnlyHint: true, openWorldHint: false)),
         Tool(name: "set_chat_alias", description: "Set or replace a local alias for an exact chat GUID; null removes it. Does not rename Messages or send anything.", inputSchema: object(["chatID": string, "alias": ["type": ["string", "null"], "minLength": 1]], required: ["chatID", "alias"]), annotations: .init(readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false)),
     ]
 

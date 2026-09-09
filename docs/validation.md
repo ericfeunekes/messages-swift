@@ -163,11 +163,12 @@ preparatory benchmark was not changed or rerun as a production performance claim
 Integrated production latency and live WAL contention remain unmeasured.
 
 The response preserves source row kinds and independent edited/retracted state;
-activity normalization remains an explicit decision in [decisions](decisions.md).
-Activity buckets/counts remain first-release work. Sending synthetic proof and
+activity normalization follows the accepted rule in [decisions](decisions.md).
+Sending synthetic proof and
 live gates are defined in [sending boundary validation](#sending-boundary-validation).
 Incoming attachment payload proof and live client gates are defined in
 [incoming attachment checks](#incoming-attachment-checks).
+Activity proof is below.
 No placeholder operation claims success for those capabilities.
 
 ### Initial implementation result: September 8, 2026, commit 582be93
@@ -427,3 +428,59 @@ The independent MCP test passed read/search and attachment/image metadata checks
 with present and missing status columns. The image check returned
 `unsupported_image` inside the tool sandbox and passed unchanged outside it;
 this is a test-environment limitation, not a decoded provider status.
+
+
+## Activity validation
+
+Run the activity-only tests with `swift test --filter Activity` and the independent
+adapter checks with `.scratch/protocol-venv/bin/python Tests/Protocol/activity_test.py`.
+The latter uses the compiled `MCPTestServer` and its own synthetic SQLite fixture.
+
+Real SQLite tests reconcile shared-normalizer activity with complete history,
+including attachment-only, failed-body, edited, retracted, reaction, preview and
+unknown rows. They distinguish repeated associations, distinct physical rows with
+identical GUIDs, global deduplication and per-chat counts. They cover partial and
+empty ranges, zero buckets, Halifax DST, Monday weeks, month boundaries,
+whole-range ranking with chronological series, exact membership, contact ambiguity,
+alias enrichment, stable arrivals and terminal pagination.
+
+Mutation tests cover direction changes, deletion, membership removal and
+retraction during continuation. Body-only edits preserve counts and can continue;
+foreign-store cursors and deleted selected chats retain distinct restart errors.
+Removing the result-digest check caused the rank-change regression to fail;
+removing the membership arrival fence caused its regression to fail. Both changes
+were restored. Contemporary microsecond endpoints failed before the date conversion
+fix and passed after it. Near-limit tests include clipped day/week/month intervals.
+The MCP tests exercise input precision rejection, offset timestamps, reported-bound
+round trips, retraction/history reconciliation and continuation errors.
+
+Live counts still require root's read-only installed-app check: choose a short
+explicit interval in one conversation, consume all history pages, count only
+unretracted messages by stable source identity, and compare sent/received/total.
+Repeat with day buckets and a small per-chat ranking. For cross-chat reconciliation,
+deduplicate source identity overall and preserve each association per chat. If
+public GUIDs are ambiguous, inspect exact source coordinates privately rather than
+coalescing by text/date/sender. Log only aggregate outcomes and build identity.
+No real messages, Contacts data or installed-app operations were used in these
+synthetic tests. Live schema coverage, installed MCP behavior and performance
+remain separate checks; this is not nanosecond-accurate timestamp input.
+
+
+On September 9, 2026, the activity branch passed 71 XCTest cases and 37 Swift
+Testing tests on Intel. The independent MCP clients passed 13 activity checks and
+15 existing checks. Removing retraction exclusion caused four assertions across
+the two retraction tests to fail; restoring it passed. These are branch-local
+synthetic results; root owns combined-main integration and live reconciliation.
+
+### Combined activity integration result
+
+On September 9, 2026, the integrated eight-tool build passed 118 XCTest cases
+and 43 Swift Testing tests. Independent Python MCP 1.26 clients passed 15
+read/alias checks, six inert send checks, 25 attachment checks, two raw
+provider-status checks and 13 activity checks. The activity inventory now requires
+all eight tools; activity-specific timestamp precision leaves existing read/send
+and attachment behavior intact. Logs are local under `.scratch/activity-integration/`.
+No installed-app actions, real Messages/Contacts reads, sends or permission
+changes were used. The read-only live activity reconciliation above remains the
+integration owner's next gate. Existing sending, file consumption and platform
+validation gates remain separate.

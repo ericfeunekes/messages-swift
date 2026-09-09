@@ -78,6 +78,26 @@ The tested search direction is one streaming scan, shared searchable-text resolu
 
 The people cache uses FIFO eviction and refreshes records daily or on use, whichever is sooner. Refresh and eviction order are separate: an existing record's refresh does not move it to the back of the queue under the accepted interpretation. Keep user aliases immediately consistent and independent of cache refresh/eviction. A process may retain hot lookups while connected to MCP, but persistence must also work across process restarts. The menu-bar app owns daily refresh while active and overdue refresh at startup.
 
+## Activity queries
+
+Activity streams distinct source coordinates and classification metadata from a
+read-only SQLite snapshot. It does not decode message bodies or fetch truncated
+history pages. The shared source classifier separates user messages from events;
+activity excludes retracted user messages while history preserves their markers.
+SQL deduplicates message rows overall and message/chat coordinates per chat.
+
+The operation reuses participant resolution, membership predicates and chat
+names. Calendar boundaries use the resolved Gregorian timezone. Sparse bucket
+counts determine whole-range chat ranking; zero rows are produced for the selected
+page rather than materializing a complete chat-by-calendar grid.
+
+Continuation preserves integer date bounds and arrival fences for messages,
+chats and both association tables. A SHA256 digest covers every sparse count,
+ordered chat coordinate and interval before page slicing. Changed aggregates
+require restart; unchanged body edits can continue. The digest validates count
+pagination, not individual-message identity or a historical snapshot. The
+[activity schema](schemas.md#activity) owns input precision and result details.
+
 ## Runtime setup
 
 The package contains the shared `MessagesCore` library, `MessagesMCPAdapter`,
@@ -149,7 +169,8 @@ codex mcp add messages-swift -- "$HOME/Applications/Messages Swift.app/Contents/
 ```
 
 A new client session is required to verify discovery. Registration alone does not
-prove a live read. No send, count or image placeholder is exposed.
+prove a live read. All eight registered tools use the shared operations; live
+validation gates are recorded in [validation](validation.md).
 
 `contacts.json` is version 1 with `containerID`, `isSeeded` and FIFO `entries`;
 each entry carries `person` (source identity, display name, handles), `admittedAt`
@@ -163,8 +184,7 @@ First population ranks the selected source's people over the preceding 90 days.
 A one-member conversation credits its counterpart for sent and received source
 rows. A multi-member conversation credits only the actual incoming author;
 outgoing group rows give no passive member credit. Repeated associations to the
-same handle credit a source row once; a person's score sums its handle scores. This cache-baseline rule does not settle the
-later logical activity-count normalizer. Current membership cardinality is used;
+same handle credit a source row once; a person's score sums its handle scores. This cache-baseline rule is separate from the activity-count normalizer. Current membership cardinality is used;
 no display-name/routing-string guess distinguishes a residual one-member group.
 Later admission evicts the earliest entry at 100 people; refresh preserves order.
 

@@ -118,11 +118,11 @@ extension MessageStore {
     return SQLClause(sql: conditions.joined(separator: " AND "), values: values)
   }
 
-  func messageClause(filter: MessageFilter, cursor: MessagePageCursor?, fence: Int64, schema: MessageSchema) throws -> SQLClause {
+  func messageClause(filter: MessageFilter, cursor: MessagePageCursor?, fence: Int64, schema: MessageSchema, membershipFence: Int64? = nil) throws -> SQLClause {
     var conditions = ["m.ROWID <= ?"]
     var values: [SQLiteValue] = [.integer(fence)]
     if let chatID = filter.chatID { conditions.append("c.guid = ?"); values.append(.text(chatID.rawValue)) }
-    appendMembership(filter.participantHandles, groups: filter.participantHandleGroups, exact: filter.exactMembership, chatAlias: "cmj.chat_id", conditions: &conditions, values: &values)
+    appendMembership(filter.participantHandles, groups: filter.participantHandleGroups, exact: filter.exactMembership, chatAlias: "cmj.chat_id", conditions: &conditions, values: &values, arrivalFence: membershipFence)
     if let start = filter.startDate { conditions.append("m.date >= ?"); values.append(.integer(try appleEpoch(start))) }
     if let end = filter.endDate { conditions.append("m.date < ?"); values.append(.integer(try appleEpoch(end))) }
     if filter.unreadOnly {
@@ -136,17 +136,18 @@ extension MessageStore {
     return SQLClause(sql: conditions.joined(separator: " AND "), values: values)
   }
 
-  func appendMembership(_ input: [String], groups: [[String]], exact: Bool, chatAlias: String, conditions: inout [String], values: inout [SQLiteValue]) {
+  func appendMembership(_ input: [String], groups: [[String]], exact: Bool, chatAlias: String, conditions: inout [String], values: inout [SQLiteValue], arrivalFence: Int64? = nil) {
+    let fenceClause = arrivalFence.map { " AND member_join.ROWID <= \($0)" } ?? ""
     let resolvedGroups = groups.filter { !$0.isEmpty } + input.map { [$0] }
     let handles = normalizedHandles(resolvedGroups.flatMap { $0 })
     for group in resolvedGroups.map(normalizedHandles).filter({ !$0.isEmpty }) {
       let placeholders = Array(repeating: "?", count: group.count).joined(separator: ",")
-      conditions.append("EXISTS (SELECT 1 FROM chat_handle_join member_join JOIN handle member ON member.ROWID = member_join.handle_id WHERE member_join.chat_id = \(chatAlias) AND lower(member.id) IN (\(placeholders)))")
+      conditions.append("EXISTS (SELECT 1 FROM chat_handle_join member_join JOIN handle member ON member.ROWID = member_join.handle_id WHERE member_join.chat_id = \(chatAlias)\(fenceClause) AND lower(member.id) IN (\(placeholders)))")
       values += group.map(SQLiteValue.text)
     }
     guard exact, !handles.isEmpty else { return }
     let placeholders = Array(repeating: "?", count: handles.count).joined(separator: ",")
-    conditions.append("NOT EXISTS (SELECT 1 FROM chat_handle_join member_join JOIN handle member ON member.ROWID = member_join.handle_id WHERE member_join.chat_id = \(chatAlias) AND lower(member.id) NOT IN (\(placeholders)))")
+    conditions.append("NOT EXISTS (SELECT 1 FROM chat_handle_join member_join JOIN handle member ON member.ROWID = member_join.handle_id WHERE member_join.chat_id = \(chatAlias)\(fenceClause) AND lower(member.id) NOT IN (\(placeholders)))")
     values += handles.map(SQLiteValue.text)
   }
 

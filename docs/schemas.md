@@ -47,7 +47,7 @@ Read returns the enriched `chat`, `messages`, `events`, `decodingDiagnostics`,
 `decodingFailureCount`, `scannedAssociationCount`, `unresolvedContactHandles`,
 `contactCandidates` and optional `nextCursor`. Search returns the same record collections, enriched
 `chats` and `contactCandidates`. Ordinary user messages and attachment-only rows
-are in `messages`. Proven reaction, system or preview rows and unclassified rows
+are in `messages`. Reaction and preview rows and unclassified rows (including unsupported system events)
 are separate typed `events`. Both preserve source identity and readable text.
 There is no timestamp/sender preview coalescing. Associations and edit/retraction
 markers are reported only when the source supports them; no original text or edit
@@ -80,7 +80,6 @@ is separate from this candidate lookup.
 MCP returns structured JSON plus equivalent text. Invalid invocations use JSON-RPC
 invalid-params errors; expected operation failures use `isError: true` and an
 `error` object with a stable `code`; alias collisions also return conflicting `chatIDs`. Alias writes change only local metadata.
-Activity counts remain a separate first-release operation.
 
 Malformed cursor encodings return `invalid_cursor`; a valid cursor with changed
 filters, search mode, or owning connection returns `cursor_mismatch`. SQLite's
@@ -204,3 +203,65 @@ chat ID with no recipient fallback. Individual routing requires exactly one
 enabled account of the requested service; an unavailable or ambiguous route is
 reported as a rejected part with `messages_route_unavailable`. A dictionary service name does not establish that this Mac can send
 through that service. Genuine service/target behavior remains a live test gate.
+
+## Activity
+
+`count_message_activity` uses optional `chatID`, `participants`, `membership` and
+`unreadOnly` with the same conversation semantics as search. It accepts
+`dateRange`, `timeZone` (an IANA identifier, default the Mac’s current zone at the initial request), `groupBy` (`overall`
+or `chat`, default `overall`), `bucket` (`none`, `day`, `week`, `month`, default
+`none`), `ranking` (`chronological`, `total`, `sent`, `received`, default
+`chronological`), `limit` and `cursor`.
+
+A missing end resolves to the invocation time. A missing start resolves to the
+earliest structurally matching source date before that end, or the end itself
+when no such row exists. Equal bounds are a valid empty interval; reversed bounds
+are invalid. The result reports `resolvedDateRange`, `timeZone`, `groupBy`,
+`bucket`, `ranking`, `rows`, enriched `chats`, `contactCandidates` and optional
+`nextCursor`. Ambiguous contacts return candidates with no rows or resolved range.
+
+Explicit MCP timestamps accept at most six fractional digits; higher precision
+is rejected, not silently rounded. The invocation-time default and native Swift
+Date arguments resolve to the nearest microsecond. The supported Date range is within 2^33 seconds of 2001-01-01 UTC
+(roughly 1728–2273), where Foundation can represent that resolution; ranges outside those limits
+return `invalid_date_range`. This is not nanosecond-accurate input. Source
+timestamps, inferred earliest source bounds and cursor bounds retain their raw
+integer nanoseconds. Display dates report microseconds, so an inferred boundary
+closer than a microsecond to a source timestamp is not a lossless replacement for
+the cursor. Continuation uses stored integer bounds, never reparsed display dates.
+
+Each row has optional `chatID`, exact clipped `start` and `end`, and `counts`
+(`total`, `sent`, `received`). Without buckets, each group has one row, including
+an empty interval. Calendar buckets intersect the requested interval; partial
+first/last buckets retain the exact requested bounds. Gregorian days/months and
+Monday weeks use the reported time zone, including daylight-saving transitions.
+Calendar bucketing of an empty interval returns no rows. Zero buckets are included.
+Per-chat groups include matching source chats even when they have no activity.
+
+Overall output is chronological. Per-chat output orders chats by the selected
+whole-range count descending, breaking ties by chat GUID then source chat row ascending; chronological
+ranking orders chats by GUID. Every chat retains its chronological bucket series,
+including zeros. Pagination limits rows, so a chat’s series can span pages.
+Repeat all inputs with the cursor. Resolved dates and time zone, source message/chat/message-association/membership-association
+arrival fences and resolved participant groups remain fixed for continuation.
+Changes to existing source rows are visible; this is an arrival-fenced query, not
+a retained historical database snapshot. A digest of the sparse counts, chat coordinates and interval boundaries detects
+changes that would invalidate row offsets or ranks, returning
+`activity_changed_restart_required`. It stores no bodies or historical snapshot.
+Edits that leave these output counts and coordinates unchanged do not invalidate
+continuation; chat labels and contact enrichment remain current. Changed inputs, changed resolved
+membership or another store connection reject continuation.
+
+Ordinary and attachment-only messages count once, including edited rows at their
+original source date. Source-marked retracted/unsent messages are excluded, while
+history retains them with `isRetracted: true`. Reactions, previews and
+unknown/system events do not count.
+Overall rows count each physical source message ROWID once across matching chats;
+per-chat rows count each distinct (message ROWID, chat ROWID) once. Repeated join
+rows do not increase counts. No GUID, timestamp, sender or text heuristic merges
+separate source rows. These coordinates preserve the same source identity used
+by history; public history IDs and chat GUIDs remain unchanged. Body decoding
+failure does not erase a classified message from activity.
+
+A retraction that changes a continued aggregate returns
+`activity_changed_restart_required`; a fresh request excludes the retracted row.

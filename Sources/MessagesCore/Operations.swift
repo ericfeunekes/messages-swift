@@ -219,6 +219,34 @@ public actor MessagesOperations {
                                     contactCandidates: [], decodingFailureCount: page.decodingFailureCount, scannedAssociationCount: page.scannedAssociationCount, nextCursor: try encodeCursor(page.nextCursor))
     }
 
+    public func countMessageActivity(_ input: CountMessageActivityInput, now: Date = Date()) throws -> CountMessageActivityResult {
+        guard (1...100).contains(input.limit) else { throw OperationError.invalidLimit(input.limit) }
+        if let zone = input.timeZone, TimeZone(identifier: zone) == nil { throw ActivityError.invalidTimeZone }
+        if let start = input.dateRange.start, let end = input.dateRange.end, start > end { throw MessageStoreError.invalidDateRange }
+        let cursor: ActivityCursor? = try decodeCursor(input.cursor)
+        if let cursor, cursor.input != input.withoutCursor { throw MessageStoreError.cursorFilterMismatch }
+        if cursor == nil, let chatID = input.chatID, try store.chat(id: ChatID(rawValue: chatID)) == nil {
+            throw OperationError.unknownChat(chatID)
+        }
+        let people = try preparedPeople(now: now)
+        let resolution: Resolution
+        do { resolution = try resolve(input.participants, people: people) }
+        catch OperationError.contactNotFound where cursor != nil { throw MessageStoreError.cursorFilterMismatch }
+        guard resolution.candidates.isEmpty else {
+            if cursor != nil { throw MessageStoreError.cursorFilterMismatch }
+            return CountMessageActivityResult(resolvedDateRange: nil, timeZone: input.timeZone ?? TimeZone.current.identifier, groupBy: input.groupBy,
+                bucket: input.bucket, ranking: input.ranking, rows: [], chats: [], contactCandidates: resolution.candidates, nextCursor: nil)
+        }
+        let filter = MessageFilter(chatID: input.chatID.map(ChatID.init(rawValue:)), participantHandleGroups: resolution.groups,
+            exactMembership: input.membership == .exact, startDate: input.dateRange.start, endDate: input.dateRange.end, unreadOnly: input.unreadOnly)
+        let page = try store.countMessageActivity(input, filter: filter, cursor: cursor, now: now)
+        let chats = try store.chats(ids: Set(page.rows.compactMap { $0.chatID.map(ChatID.init(rawValue:)) }))
+        try cacheUsed(people, handles: chats.flatMap(\.participants), identities: resolution.identities, now: now)
+        return CountMessageActivityResult(resolvedDateRange: page.range, timeZone: page.timeZone, groupBy: input.groupBy,
+            bucket: input.bucket, ranking: input.ranking, rows: page.rows, chats: chats.map { enrich($0, people: people) },
+            contactCandidates: [], nextCursor: try encodeCursor(page.cursor))
+    }
+
     private func preparedPeople(now: Date) throws -> [ContactPerson] {
         let people = try directory.allContacts(in: binding)
         try validateDirectory(people)
@@ -333,14 +361,14 @@ public actor MessagesOperations {
         record.attachments.map { AttachmentResult(id: $0.id, filename: $0.transferName ?? $0.filename.map { URL(fileURLWithPath: $0).lastPathComponent }, mimeType: $0.mimeType, availability: $0.availability, transferState: $0.transferState) }
     }
     private func message(_ record: MessageRecord, people: [ContactPerson], unresolvedHandles: Set<String> = []) -> MessageResult? {
-        guard record.kind == .ordinary || record.kind == .attachmentOnly else { return nil }
+        guard MessageNormalizer.isMessage(record.kind) else { return nil }
         return MessageResult(id: record.id.rawValue, chatID: record.chatID.rawValue, date: record.date, sender: participant(record.sender, people: people, unresolvedHandles: unresolvedHandles),
                              isFromMe: record.isFromMe, text: record.body.text, attachments: attachments(record), kind: record.kind == .ordinary ? .ordinary : .attachment,
                              decodingStatus: record.body.status, isEdited: record.isEdited, isRetracted: record.isRetracted,
                              isSent: record.isSent, isDelivered: record.isDelivered, deliveryErrorCode: record.deliveryErrorCode)
     }
     private func event(_ record: MessageRecord, people: [ContactPerson], unresolvedHandles: Set<String> = []) -> MessageEventResult? {
-        guard record.kind != .ordinary && record.kind != .attachmentOnly else { return nil }
+        guard !MessageNormalizer.isMessage(record.kind) else { return nil }
         return MessageEventResult(id: record.id.rawValue, chatID: record.chatID.rawValue, date: record.date, kind: record.kind.rawValue, text: record.body.text,
                                   sender: participant(record.sender, people: people, unresolvedHandles: unresolvedHandles), associatedMessageID: record.associatedMessageGUID,
                                   associatedMessageType: record.associatedMessageType, decodingStatus: record.body.status,

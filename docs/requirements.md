@@ -62,7 +62,7 @@ These names describe the intended operation surface. Exact input and output sche
 
 ## Activity and attachments
 
-Counts and history share one definition of a message. Counts support half-open date ranges, sent/received splits, an explicit reported time zone, Monday week boundaries and empty intervals. Resolved bounds remain stable across continuation pages. Daily totals alone cannot answer partial-day ranges.
+Counts use the same source classification as history. Source-marked retracted/unsent messages remain visible in history but are excluded from activity totals. Edits do not add messages. Counts support half-open date ranges, sent/received splits, an explicit reported time zone, Monday week boundaries and empty intervals. Resolved bounds remain stable across continuation pages. Daily totals alone cannot answer partial-day ranges.
 
 Image and file access resolve an attachment belonging to a message result. Neither is an arbitrary filesystem reader. Missing or undownloaded attachments remain distinguishable from absent attachments. File access preserves original bytes and type/name metadata; size limits fail explicitly without truncation. Image views report resizing and frame selection. No automatic cloud fetch is required. Outgoing files are shown in the preview and validated before sending.
 

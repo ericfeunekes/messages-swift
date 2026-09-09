@@ -55,14 +55,10 @@ extension MessageStore {
     schema: MessageSchema, body: DecodedBody, attachments: [AttachmentMetadata],
     associatedType: Int?, itemType: Int?, balloonBundleID: String?
   ) -> MessageRowKind {
-    // Without item_type, source semantics are ambiguous: retain the row as
-    // unknown rather than presenting it as an ordinary user message.
-    guard schema.has("item_type"), schema.has("associated_message_type"), schema.has("balloon_bundle_id"), let itemType else { return .unknown }
-    if let associatedType, (2000...2006).contains(associatedType) || (3000...3006).contains(associatedType) {
-      return .reaction
-    }
-    if balloonBundleID?.contains("URLBalloonProvider") == true { return .preview }
-    guard itemType == 0 else { return .unknown }
+    let sourceKind = MessageNormalizer.sourceKind(
+      hasClassification: schema.has("item_type") && schema.has("associated_message_type") && schema.has("balloon_bundle_id"),
+      associatedType: associatedType, itemType: itemType, balloonBundleID: balloonBundleID)
+    guard sourceKind == .ordinary else { return sourceKind }
     if (body.status == .absent || (body.status == .text && body.text?.isEmpty == true)) && !attachments.isEmpty { return .attachmentOnly }
     return .ordinary
   }

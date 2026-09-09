@@ -57,6 +57,7 @@ public struct AttachmentMetadata: Codable, Sendable {
   public let byteCount: Int64?
   public let isSticker: Bool?
   public let availability: AttachmentAvailability
+  public let transferState: Int?
 }
 
 public struct ChatRecord: Codable, Sendable {
@@ -100,6 +101,9 @@ public struct MessageRecord: Codable, Sendable {
   public let isEdited: Bool
   public let isRetracted: Bool
   public let attachments: [AttachmentMetadata]
+  public let isSent: Bool?
+  public let isDelivered: Bool?
+  public let deliveryErrorCode: Int?
 }
 
 public struct ChatFilter: Codable, Sendable, Equatable {

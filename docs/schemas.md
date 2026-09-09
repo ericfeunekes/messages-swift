@@ -131,6 +131,20 @@ native image encode/decode fixtures, and an independent MCP client that checks
 returned bytes and MIME. Cases cover association mismatch, connection-scoped IDs,
 missing files, symlinks and nonregular files, unsupported and malformed images,
 image resizing/frame selection, file MIME handling and exact size boundaries.
+
+## Raw provider status in reads
+
+Ordinary/attachment message results in both `read_messages` and `search_messages`
+include optional `isSent` and `isDelivered` from the source integer flags, and
+optional `deliveryErrorCode` from the source `error`. Attachment metadata includes
+optional raw `transferState` from `transfer_state`. Missing columns and SQL NULL
+remain unknown and are omitted; known false flags and numeric zero remain present.
+No Apple error/state label is inferred from these numbers. For example, a locally
+`available` attachment can coexist with an unsuccessful transfer state: local
+file availability is independent of delivery. These are observed provider fields,
+not a new send receipt or a promise that status has settled. `send_message` still
+reports only command acceptance with delivery unconfirmed, without polling.
+
 ## Sending
 
 `chatID` selects an exact existing direct or group GUID and forbids a service

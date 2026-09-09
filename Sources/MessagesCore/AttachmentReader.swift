@@ -119,7 +119,8 @@ private func responseMetadata(_ metadata: AttachmentMetadata) -> AttachmentMetad
   AttachmentMetadata(
     id: metadata.id, filename: attachmentName(metadata), transferName: metadata.transferName,
     uniformTypeIdentifier: metadata.uniformTypeIdentifier, mimeType: metadata.mimeType,
-    byteCount: metadata.byteCount, isSticker: metadata.isSticker, availability: metadata.availability
+    byteCount: metadata.byteCount, isSticker: metadata.isSticker, availability: metadata.availability,
+    transferState: metadata.transferState
   )
 }
 

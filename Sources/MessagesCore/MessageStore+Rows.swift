@@ -7,7 +7,8 @@ extension MessageStore {
       "m.ROWID", "cmj.chat_id", "c.guid", column("guid"), "m.date", column("text"),
       column("attributedbody"), "m.is_from_me", column("service"), "h.id",
       column("associated_message_guid"), column("associated_message_type"), column("item_type"),
-      column("balloon_bundle_id"), column("date_edited"), column("date_retracted")
+      column("balloon_bundle_id"), column("date_edited"), column("date_retracted"),
+      column("is_sent"), column("is_delivered"), column("error")
     ].enumerated().map { index, expression in "\(expression) AS c\(index)" }.joined(separator: ", ")
   }
 
@@ -43,7 +44,10 @@ extension MessageStore {
       balloonBundleID: statement.text(at: 13),
       isEdited: edited,
       isRetracted: retracted,
-      attachments: attachments
+      attachments: attachments,
+      isSent: statement.isNull(at: 16) ? nil : statement.integer(at: 16) != 0,
+      isDelivered: statement.isNull(at: 17) ? nil : statement.integer(at: 17) != 0,
+      deliveryErrorCode: statement.isNull(at: 18) ? nil : Int(statement.integer(at: 18))
     )
   }
 
@@ -68,7 +72,7 @@ extension MessageStore {
     func column(_ name: String) -> String { schema.attachmentHas(name) ? "a.\(name)" : "NULL" }
     let statement = try SQLiteStatement(database, """
       SELECT a.ROWID, \(column("guid")), \(column("filename")), \(column("transfer_name")), \(column("uti")), \(column("mime_type")),
-             \(column("total_bytes")), \(column("is_sticker"))
+             \(column("total_bytes")), \(column("is_sticker")), \(column("transfer_state"))
       FROM message_attachment_join maj JOIN attachment a ON a.ROWID = maj.attachment_id
       WHERE maj.message_id = ? ORDER BY a.ROWID ASC
       """)
@@ -86,7 +90,8 @@ extension MessageStore {
         id: guid?.isEmpty == false ? guid! : "\(generation):\(rowID)",
         filename: filename, transferName: statement.text(at: 3), uniformTypeIdentifier: statement.text(at: 4),
         mimeType: statement.text(at: 5), byteCount: statement.isNull(at: 6) ? nil : statement.integer(at: 6),
-        isSticker: statement.isNull(at: 7) ? nil : statement.integer(at: 7) != 0, availability: availability
+        isSticker: statement.isNull(at: 7) ? nil : statement.integer(at: 7) != 0, availability: availability,
+        transferState: statement.isNull(at: 8) ? nil : Int(statement.integer(at: 8))
       ))
     }
     return result

@@ -406,3 +406,24 @@ The staging correction passed 96 XCTest tests and 43 Swift Testing tests on the
 Intel host, plus the six independent MCP send checks with staged paths/bytes and
 retention assertions. The native consumer's access to the corrected staging path
 remains a live gate; synthetic copy success does not claim delivery.
+
+
+### Raw provider-status readback
+
+Synthetic SQLite tests cover zero/nonzero flags, raw error/transfer values,
+SQL NULL and missing columns through the shared read/search operations. The
+independent adapter check uses the actual MCP fixture server:
+
+```sh
+.scratch/protocol-venv/bin/python Tests/Protocol/provider_status_test.py
+```
+
+An available local file with a nonzero raw transfer value is preserved without
+claiming delivery. These fields do not decode undocumented Apple error enums,
+change send acceptance semantics or start a status polling loop.
+
+The provider-status addition passed 98 XCTest tests and 43 Swift Testing tests.
+The independent MCP test passed read/search and attachment/image metadata checks
+with present and missing status columns. The image check returned
+`unsupported_image` inside the tool sandbox and passed unchanged outside it;
+this is a test-environment limitation, not a decoded provider status.

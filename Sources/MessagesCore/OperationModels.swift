@@ -162,12 +162,14 @@ public struct AttachmentResult: Codable, Sendable, Equatable {
     public let filename: String?
     public let mimeType: String?
     public let availability: AttachmentAvailability
+    public let transferState: Int?
 
-    public init(id: String, filename: String? = nil, mimeType: String? = nil, availability: AttachmentAvailability = .unknown) {
+    public init(id: String, filename: String? = nil, mimeType: String? = nil, availability: AttachmentAvailability = .unknown, transferState: Int? = nil) {
         self.id = id
         self.filename = filename
         self.mimeType = mimeType
         self.availability = availability
+        self.transferState = transferState
     }
 }
 
@@ -190,12 +192,19 @@ public struct MessageResult: Codable, Sendable, Equatable {
     public let isEdited: Bool
     public let isRetracted: Bool
 
-    public init(id: String, chatID: String, date: Date, sender: Participant?, isFromMe: Bool, text: String?, attachments: [AttachmentResult], kind: MessageKind, decodingStatus: DecodedBodyStatus, isEdited: Bool, isRetracted: Bool) {
+    public let isSent: Bool?
+    public let isDelivered: Bool?
+    public let deliveryErrorCode: Int?
+
+    public init(id: String, chatID: String, date: Date, sender: Participant?, isFromMe: Bool, text: String?, attachments: [AttachmentResult], kind: MessageKind, decodingStatus: DecodedBodyStatus, isEdited: Bool, isRetracted: Bool, isSent: Bool? = nil, isDelivered: Bool? = nil, deliveryErrorCode: Int? = nil) {
         self.id = id
         self.chatID = chatID
         self.date = date
         self.sender = sender
         self.isFromMe = isFromMe
+        self.isSent = isSent
+        self.isDelivered = isDelivered
+        self.deliveryErrorCode = deliveryErrorCode
         self.text = text
         self.attachments = attachments
         self.kind = kind

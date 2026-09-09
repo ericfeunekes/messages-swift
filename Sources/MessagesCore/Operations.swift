@@ -330,13 +330,14 @@ public actor MessagesOperations {
                           participants: participants, service: chat.service, lastActivity: chat.lastActivityAt, unreadCount: chat.unreadCount)
     }
     private func attachments(_ record: MessageRecord) -> [AttachmentResult] {
-        record.attachments.map { AttachmentResult(id: $0.id, filename: $0.transferName ?? $0.filename.map { URL(fileURLWithPath: $0).lastPathComponent }, mimeType: $0.mimeType, availability: $0.availability) }
+        record.attachments.map { AttachmentResult(id: $0.id, filename: $0.transferName ?? $0.filename.map { URL(fileURLWithPath: $0).lastPathComponent }, mimeType: $0.mimeType, availability: $0.availability, transferState: $0.transferState) }
     }
     private func message(_ record: MessageRecord, people: [ContactPerson], unresolvedHandles: Set<String> = []) -> MessageResult? {
         guard record.kind == .ordinary || record.kind == .attachmentOnly else { return nil }
         return MessageResult(id: record.id.rawValue, chatID: record.chatID.rawValue, date: record.date, sender: participant(record.sender, people: people, unresolvedHandles: unresolvedHandles),
                              isFromMe: record.isFromMe, text: record.body.text, attachments: attachments(record), kind: record.kind == .ordinary ? .ordinary : .attachment,
-                             decodingStatus: record.body.status, isEdited: record.isEdited, isRetracted: record.isRetracted)
+                             decodingStatus: record.body.status, isEdited: record.isEdited, isRetracted: record.isRetracted,
+                             isSent: record.isSent, isDelivered: record.isDelivered, deliveryErrorCode: record.deliveryErrorCode)
     }
     private func event(_ record: MessageRecord, people: [ContactPerson], unresolvedHandles: Set<String> = []) -> MessageEventResult? {
         guard record.kind != .ordinary && record.kind != .attachmentOnly else { return nil }

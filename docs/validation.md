@@ -554,3 +554,14 @@ The final `provider_reported` delivery label passed its rebuilt focused test.
 Evidence is local under `.scratch/send-routing-validation/`; private message
 history is not part of these fixtures. Installed sending remains a separate live
 check, limited to the owner's authorized synthetic self-tests.
+
+The installed signed app then passed a bounded synthetic self-test: text returned
+`sent` with delivery initially false, and normal reads later showed delivery true.
+An incoming watch received the text; cursor replay and consumed-cursor suppression
+passed while a concurrent read completed in 74 ms. A synthetic image initially
+returned `pending`, then source reads showed sent and the incoming image preserved
+24-by-12 all-red pixels. An earlier source-validation rejection occurred before
+dispatch; one revalidated attempt succeeded. No contractor or group messages were
+sent in this validation. A fresh native Codex client discovered all ten tools and
+used route preflight for a synthetic unknown number, receiving local iMessage/SMS
+options with no historical suggestion. This proves active calls, not idle wakeups.

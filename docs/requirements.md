@@ -89,6 +89,12 @@ belong to the tool. Do not expose selected-chat-only controls as satisfying this
 requirement. Unsupported or ambiguous targets must produce an explicit failure,
 not a guessed action or a request for manual navigation.
 
+Organization includes existing conversations from unknown providers, including
+SMS short codes. A Contacts match or eligibility as a new outbound recipient is
+not a prerequisite for managing an existing conversation. Use its native source
+identity and verify the actual UI target. Do not substitute contact-name matching
+for identity or assume that a contact defines the native merged-chat scope.
+
 ## Scope boundaries
 
 - Intel macOS is the initial validation target. The minimum supported macOS version and Apple Silicon release coverage remain [open](decisions.md#platform-and-runtime).

@@ -1,0 +1,5 @@
+interface:
+  display_name: "iMessage"
+  short_description: "Read, search and send texts, and review conversations."
+policy:
+  allow_implicit_invocation: true

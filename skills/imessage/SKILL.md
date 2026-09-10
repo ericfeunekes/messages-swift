@@ -1,9 +1,9 @@
 ---
-name: messages-private
-description: Read, search, review and summarize text messages; check received messages, conversations and activity; view attachments; and draft or send replies through the Messages Private MCP. Use for requests about texts, iMessage, SMS/RCS, message history, or following up with people by text.
+name: imessage
+description: Read and search iMessage, SMS and RCS text messages, review conversations and received messages, view attachments, and draft or send replies. Use when the user asks about their texts, message history, or following up with someone by text.
 ---
 
-# Messages Private
+# iMessage
 
 Use the connected **Messages Private** app to access Apple Messages on the user's Mac. Discover its tools and use their current schemas. The skill provides guidance; the app provides access. If its tools are unavailable, ask the user to enable Messages Private for this chat. If the connection fails, report the error; the Mac and its Messages Swift app and tunnel must be running and online.
 

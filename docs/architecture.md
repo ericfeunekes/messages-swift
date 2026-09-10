@@ -218,6 +218,15 @@ executes parsed argv directly and closes stdin/signals its child when stopping.
 The [official tunnel guide](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
 owns Platform registration, personal workspace association and ChatGPT activation.
 
+The tunnel can start successive logical MCP clients over its one stdio process.
+An idle `initialize` closes only the previous backend socket and creates a fresh
+SDK session; the app and shared operation actor remain running. Initialization
+is rejected while a previous request or partial request write remains active,
+without interrupting that work. Previously queued control notifications drain
+before rotation. No operation is replayed. This follows the same connection
+rotation principle as the tunnel client's public Harpoon adapter, without
+weakening the SDK's duplicate-initialization guard.
+
 ### Connection recovery after an app restart
 
 The stdio bridge remains available when the app disconnects. It discards incomplete

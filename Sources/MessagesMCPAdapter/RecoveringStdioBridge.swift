@@ -68,11 +68,29 @@ public enum RecoveringStdioBridge {
                 : "Messages Swift request was not submitted: \(reason)."
             try append(["jsonrpc": "2.0", "id": request.id, "error": ["code": -32000, "message": message, "data": ["disposition": disposition]]], to: &frontend)
         }
+        func reinitializationFailure(id: Any) throws {
+            try append(["jsonrpc": "2.0", "id": id, "error": ["code": -32600,
+                        "message": "Messages Swift cannot start a new MCP session while prior requests or writes are active."]], to: &frontend)
+        }
+        func canStartNewSession() -> Bool {
+            pending.isEmpty && (outbound.isEmpty || writingRequest == nil)
+                && handshakeDeadline == nil && !initializationPending
+        }
+        func startNewSession() {
+            if socket >= 0 { close(socket); socket = -1 }
+            // No request or outbound byte is active at this boundary. Drop only
+            // unframed old-server input; complete responses already remain in
+            // frontend and are delivered on the existing stdio stream.
+            backend.removeAll(); backendScan = 0
+            backendReady = false; writingInitialized = false
+            initialization = nil; initializationID = nil; negotiated = nil
+        }
         func lost() throws {
             if socket >= 0 { close(socket); socket = -1 }
             backend.removeAll(); backendScan = 0; outbound.removeAll(); writingRequest = nil
             backendReady = false; writingInitialized = false
             queued.removeAll(); queuedBytes = 0; handshakeDeadline = nil
+            initializationPending = false
             for request in pending.values { try failure(request, reason: "connection or initialization unavailable") }
             pending.removeAll()
         }
@@ -116,6 +134,13 @@ public enum RecoveringStdioBridge {
             if frame.isEmpty { return }
             let message = try object(frame)
             let method = message["method"] as? String
+            if method == "initialize" {
+                guard let id = message["id"] else { throw StdioSocketBridge.Failure.io }
+                guard canStartNewSession() else {
+                    try reinitializationFailure(id: id)
+                    return
+                }
+            }
             if method == "notifications/cancelled", let params = message["params"] as? [String: Any], let id = params["requestId"] {
                 let requestKey = try key(id)
                 // Cancellation is a control message, not work waiting behind a
@@ -157,6 +182,7 @@ public enum RecoveringStdioBridge {
             let item = queued[0]
             let message = try object(item.data)
             let method = message["method"] as? String
+            if method == "initialize", initialization != nil { startNewSession() }
             if socket < 0 {
                 guard item.requestKey != nil else {
                     queued.removeFirst(); queuedBytes -= item.data.count + 1

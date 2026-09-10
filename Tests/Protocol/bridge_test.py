@@ -106,6 +106,84 @@ def idle_client(c):
     c.close()
 run_case('idle app restart retains client and reinitializes backend', idle_server, idle_client)
 
+# A long-lived stdio owner can carry distinct logical MCP clients. An idle
+# second initialize creates a fresh backend socket rather than weakening the
+# SDK's duplicate-initialize guard.
+def logical_session_server(accept):
+    with accept() as conn:
+        Peer(conn).initialize()
+        assert conn.recv(1) == b''
+    with accept() as conn:
+        peer = Peer(conn); peer.initialize()
+        assert peer.receive() == request(2)
+        peer.send({'jsonrpc': '2.0', 'id': 2, 'result': {'secondSession': True}})
+        assert conn.recv(1) == b''
+def logical_session_client(c):
+    c.initialize(); c.initialize()
+    c.send(request(2)); assert c.receive()['result'] == {'secondSession': True}
+    c.close()
+run_case('idle repeated initialize creates a fresh backend session', logical_session_server, logical_session_client)
+
+# Losing an initial handshake must not permanently block a later explicit one.
+def failed_initial_server(accept):
+    with accept() as conn:
+        assert Peer(conn).receive() == INIT
+    with accept() as conn:
+        peer = Peer(conn); peer.initialize()
+        assert peer.receive() == request(2)
+        peer.send({'jsonrpc': '2.0', 'id': 2, 'result': {'ready': True}})
+        assert conn.recv(1) == b''
+def failed_initial_client(c):
+    c.send(INIT)
+    assert c.receive()['error']['data']['disposition'] == 'outcome_unknown'
+    c.initialize(); c.send(request(2)); assert c.receive()['result']['ready']
+    c.close()
+run_case('failed initialization permits a later explicit session', failed_initial_server, failed_initial_client)
+
+# Do not rotate an active backend: a send already submitted to it remains
+# uncertain if disconnected, and this bridge must still deliver its response.
+outstanding_started = threading.Event()
+outstanding_rejected = threading.Event()
+def outstanding_initialize_server(accept):
+    with accept() as conn:
+        peer = Peer(conn); peer.initialize()
+        assert peer.receive() == request(2, 'send_message')
+        outstanding_started.set()
+        assert outstanding_rejected.wait(5)
+        peer.send({'jsonrpc': '2.0', 'id': 2, 'result': {'oldSession': True}})
+        assert peer.receive() == request(3)
+        peer.send({'jsonrpc': '2.0', 'id': 3, 'result': {'stillConnected': True}})
+        assert conn.recv(1) == b''
+def outstanding_initialize_client(c):
+    c.initialize(); c.send(request(2, 'send_message')); assert outstanding_started.wait(5)
+    c.send(INIT)
+    rejected = c.receive(); assert rejected['id'] == 1 and rejected['error']['code'] == -32600
+    assert 'active' in rejected['error']['message']
+    outstanding_rejected.set()
+    assert c.receive() == {'jsonrpc': '2.0', 'id': 2, 'result': {'oldSession': True}}
+    c.send(request(3)); assert c.receive()['result'] == {'stillConnected': True}
+    c.close()
+run_case('active request rejects repeated initialize and preserves its response', outstanding_initialize_server, outstanding_initialize_client)
+
+# A partially written attachment-sized request is active even before the app
+# receives its full JSON frame. Its later initialize must be rejected locally.
+partial_write_started = threading.Event()
+def partial_write_initialize_server(accept):
+    with accept() as conn:
+        Peer(conn).initialize()
+        prefix = conn.recv(65_536)
+        assert prefix and b'\n' not in prefix
+        partial_write_started.set()
+        while conn.recv(65_536): pass
+def partial_write_initialize_client(c):
+    c.initialize(); c.send(request(2, 'send_message', text='x' * (12 * 1024 * 1024)))
+    assert partial_write_started.wait(5)
+    c.send(INIT)
+    rejected = c.receive(); assert rejected['id'] == 1 and rejected['error']['code'] == -32600
+    assert 'active' in rejected['error']['message']
+    c.close()
+run_case('partially written request rejects repeated initialize without rotating backend', partial_write_initialize_server, partial_write_initialize_client)
+
 for partial in (False, True):
     effects = []
     def interrupted_server(accept):

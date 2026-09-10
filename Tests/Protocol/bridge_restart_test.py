@@ -34,6 +34,22 @@ async def main():
     try:
         await client.start()
         pid = client.process.pid
+        retained_cursor = await fixture.establish(client)
+        # The tunnel reuses its stdio child while starting a second logical MCP
+        # client session. The SDK correctly rejects a second initialize on one
+        # backend socket, so the bridge must rotate only that idle socket.
+        repeated = await client.request('initialize', {
+            'protocolVersion': '2025-03-26', 'capabilities': {},
+            'clientInfo': {'name': 'watch-protocol-restarted', 'version': '1'},
+        })
+        assert 'result' in repeated, repeated
+        assert repeated['result']['serverInfo']['name'] == 'messages-swift'
+        await client.notify('notifications/initialized')
+        assert 'result' in await client.request('tools/list', {})
+        assert client.process.pid == pid
+        retained_result, retained_payload = await client.tool('watch_messages', {'chatID': 'chat-watch', 'cursor': retained_cursor, 'waitSeconds': 0})
+        assert not retained_result.get('isError'), retained_payload
+        print('PASS real Swift SDK accepts consecutive logical initializes through one bridge process')
         cursor = await fixture.establish(client)
         await stop(server)
         server = await start_server()

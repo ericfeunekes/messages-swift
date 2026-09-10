@@ -759,3 +759,12 @@ pinned two-line SDK type fix. The independent Python MCP client now advertises
 nested experimental JSON during initialization to protect the actual protocol
 boundary. Temporary diagnostics recorded parameter types and errors only, never
 message contents or credentials.
+
+The next discovery attempt exposed successive logical initializations over the
+tunnel's persistent stdio child. The bridge now rotates an idle backend socket
+for a new initialization. The real SDK test proves consecutive initialization,
+tool discovery, unchanged bridge process and continued validity of the running
+store's cursor. Removing socket rotation makes that regression fail. Fault tests
+cover an outstanding send and a large in-flight request: initialization is
+rejected, the original connection is retained and its response is delivered.
+Existing restart, cancellation and no-replay regressions remain required.

@@ -130,6 +130,14 @@ uv pip install --python .scratch/protocol-venv/bin/python 'mcp==1.26.0'
 .scratch/protocol-venv/bin/python Tests/Protocol/client_test.py
 ```
 
+The private-tunnel deployment helpers have an inert local test. It substitutes
+the tunnel client, launchctl and installed bridge, so it creates no tunnel,
+LaunchAgent or key outside its temporary test home:
+
+```sh
+python3 Tests/PrivateTunnel/private_tunnel_test.py
+```
+
 For environments where compiler caches must remain in the checkout:
 
 ```sh

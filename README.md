@@ -40,6 +40,10 @@ swift test
 Install with `./scripts/install-menu-app.sh`, then open `~/Applications/Messages Swift.app`.
 The [runtime setup](docs/architecture.md#runtime-setup) covers permissions, contact-source selection and client registration. [Validation](docs/validation.md#implementation-commands) includes the synthetic MCP test commands. Native Intel is the tested architecture; the declared macOS 14 floor and Apple Silicon remain untested.
 
+The [private ChatGPT tunnel setup](docs/architecture.md#private-chatgpt-tunnel)
+keeps the installed app as the only Messages runtime and uses the OpenAI tunnel
+client's stdio profile. It is installed separately from the app.
+
 ## Privacy and licensing
 
 Real messages, contacts, attachment files, aliases and runtime databases stay outside this repository. Test data must be synthetic or explicitly redistributable. See the [reference rules](docs/references.md#source-and-data-boundaries).

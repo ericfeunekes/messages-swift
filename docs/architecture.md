@@ -172,6 +172,36 @@ A new client session is required to verify discovery. Registration alone does no
 prove a live read. All ten registered tools use the shared operations; live
 validation gates are recorded in [validation](validation.md).
 
+### Private ChatGPT tunnel
+
+For the owner's private ChatGPT connector, `scripts/install-private-tunnel.sh`
+uses the installed app and its existing `messages-mcp` bridge as the sole local
+Messages, Contacts, cache and socket owner. The OpenAI tunnel client starts that
+bridge over stdio; it does not add an HTTP server, Go gateway or second Swift
+operation process. The generated profile uses only
+`env:CONTROL_PLANE_API_KEY`, with a loopback ephemeral health listener.
+
+Installation takes an explicit tunnel ID and tunnel-client path. The caller
+provides `CONTROL_PLANE_API_KEY` through its environment; the installer stores
+it mode 0600 in `~/Library/Application Support/messages-swift/private-tunnel/`
+and never places it in a plist, command argument, profile or log path. The
+runtime reads that one file without shell-sourcing it, supplies the key only to
+the tunnel client, and removes `CONTROL_PLANE_API_KEY` and `OPENAI_API_KEY`
+before executing the bridge.
+
+Two user LaunchAgents provide the limited persistence: the tunnel client and
+`/usr/bin/open -g -W "$HOME/Applications/Messages Swift.app"`. Both run at load,
+restart with a 30-second throttle and keep no extra state owner alive. While
+enabled, quitting Messages Swift is supervised and it reopens. Run
+`scripts/uninstall-private-tunnel.sh` to stop and remove only these jobs; it
+preserves the runtime key unless `--delete-key` is supplied explicitly.
+
+`scripts/private-tunnel/private-tunnel-service.sh` starts or stops only those
+two jobs and preserves their plists, profile and key. During a later
+`install-menu-app.sh` update, it pauses only the app supervisor, terminates the
+installed app, replaces the bundle and resumes supervision even if the update
+fails. A normal app install remains unchanged when the private service is absent.
+
 ### Connection recovery after an app restart
 
 The stdio bridge remains available when the app disconnects. It discards incomplete

@@ -18,9 +18,19 @@ fi
 staged_app="$staging_root/$app_name"
 destination_root="$HOME/Applications"
 destination_app="$destination_root/$app_name"
+private_service="$repo_root/scripts/private-tunnel/private-tunnel-service.sh"
+resume_private_supervisor=false
 
 cleanup() {
+  local original_status=$?
+  if $resume_private_supervisor; then
+    if ! "$private_service" start-app >/dev/null 2>&1; then
+      print -u2 "Failed to resume the private Messages app supervisor."
+      (( original_status == 0 )) && return 1
+    fi
+  fi
   rm -rf "$staging_root"
+  return "$original_status"
 }
 trap cleanup EXIT
 
@@ -52,9 +62,32 @@ if [[ -e "$destination_app" ]]; then
     print -u2 "Refusing to replace an app with a different bundle identifier."
     exit 1
   fi
+  if [[ -x "$private_service" ]]; then
+    "$private_service" status-app >/dev/null 2>&1
+    service_status=$?
+    if (( service_status == 0 )); then
+      "$private_service" stop-app
+      resume_private_supervisor=true
+    elif (( service_status != 3 )); then
+      print -u2 "Unable to determine whether the private Messages app supervisor is loaded."
+      exit "$service_status"
+    fi
+  fi
   if pgrep -x "Messages Swift" >/dev/null; then
-    print -u2 "Quit Messages Swift before installing an update."
-    exit 1
+    if $resume_private_supervisor; then
+      /usr/bin/killall -TERM "Messages Swift" >/dev/null 2>&1 || true
+      for _ in {1..50}; do
+        pgrep -x "Messages Swift" >/dev/null || break
+        sleep 0.1
+      done
+      if pgrep -x "Messages Swift" >/dev/null; then
+        print -u2 "Messages Swift did not stop for the supervised update."
+        exit 1
+      fi
+    else
+      print -u2 "Quit Messages Swift before installing an update."
+      exit 1
+    fi
   fi
 fi
 rm -rf "$destination_app"

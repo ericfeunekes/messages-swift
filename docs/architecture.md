@@ -205,6 +205,14 @@ the new executable. Failed stops block replacement; failed resumes are reported
 with a nonzero exit status. A normal app install remains unchanged when the
 private service is absent.
 
+The installed tunnel-client 0.0.14 [runtime parser](https://github.com/openai/tunnel-client/blob/0f870e50a973fa820d4c409000059e181e8d242b/pkg/runtimeconfig/config.go#L2467)
+accepts single-quoted paths and backslash escapes. The wrapper supplies an
+absolute, single-quoted command; environment expansion is not expected from
+that parser. Its [stdio transport](https://github.com/openai/tunnel-client/blob/0f870e50a973fa820d4c409000059e181e8d242b/pkg/mcpclient/stdio_command.go)
+executes parsed argv directly and closes stdin/signals its child when stopping.
+The [official tunnel guide](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
+owns Platform registration, personal workspace association and ChatGPT activation.
+
 ### Connection recovery after an app restart
 
 The stdio bridge remains available when the app disconnects. It discards incomplete

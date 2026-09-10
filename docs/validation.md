@@ -138,6 +138,17 @@ LaunchAgent or key outside its temporary test home:
 python3 Tests/PrivateTunnel/private_tunnel_test.py
 ```
 
+All seventeen local helper checks pass. They cover key permissions and non-disclosure,
+bridge environment scrubbing, command paths containing spaces, job supervision,
+and app updates with absent, unknown or failing supervision. Failed unloads stop
+bundle replacement; a failed resume produces a nonzero exit and cleans staging.
+These checks do not prove an OpenAI tunnel is connected or ChatGPT can call it;
+activation requires tunnel readiness and a fresh read-only ChatGPT call.
+Two checks compile uniquely named non-GUI fixture processes to exercise real
+SIGTERM and the termination timeout; no Messages process is targeted. Updates
+stop the tunnel before the app supervisor and restart the app before the tunnel,
+so the tunnel's long-lived stdio bridge also loads the replacement executable.
+
 For environments where compiler caches must remain in the checkout:
 
 ```sh

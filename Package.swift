@@ -10,7 +10,7 @@ let package = Package(
         .executable(name: "Messages Swift", targets: ["MessagesMenuApp"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", exact: "0.12.1"),
+        .package(url: "https://github.com/ericfeunekes/swift-sdk.git", revision: "27e1756aa30d731d606f0d3c2f8c9b3ffb89e3c7"),
     ],
     targets: [
         .systemLibrary(name: "CSQLite"),

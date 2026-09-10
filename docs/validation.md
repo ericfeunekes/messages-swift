@@ -748,3 +748,14 @@ permission sequencing and layout changes then passed all 35 runtime tests,
 including the socket-backed read path. The release build also passed. Full
 removal and runtime logs are retained locally in `.scratch/gui-removal/` for
 reproduction; obsolete graphical prototype binaries and their worktree were removed.
+
+### ChatGPT discovery capability regression
+
+Private tunnel activation exposed an upstream Swift SDK 0.12.1 decoding failure:
+ChatGPT's valid nested experimental capability object was decoded as a String,
+causing JSON-RPC -32603 before tool discovery. The consumer round-trip test failed
+with `typeMismatch` at `experimental.feature` on upstream, then passed with the
+pinned two-line SDK type fix. The independent Python MCP client now advertises
+nested experimental JSON during initialization to protect the actual protocol
+boundary. Temporary diagnostics recorded parameter types and errors only, never
+message contents or credentials.

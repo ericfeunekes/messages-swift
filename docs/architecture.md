@@ -102,8 +102,13 @@ pagination, not individual-message identity or a historical snapshot. The
 
 The package contains the shared `MessagesCore` library, `MessagesMCPAdapter`,
 a native `Messages Swift` menu-bar app and the `messages-mcp` stdio bridge.
-The app uses the system SQLite and Contacts libraries and pinned Swift MCP SDK
-0.12.1. Synthetic test executables remain separate from production.
+The app uses the system SQLite and Contacts libraries and a Swift MCP SDK pin
+based on upstream 0.12.1. The [two-line compatibility patch](https://github.com/ericfeunekes/swift-sdk/commit/27e1756aa30d731d606f0d3c2f8c9b3ffb89e3c7)
+changes client experimental capability values from strings to the SDK's JSON
+Value type. ChatGPT advertises nested capability objects; upstream 0.12.1 rejects
+those during initialization. The patch preserves those values rather than
+removing them. No other SDK or transitive dependency revision changes.
+Synthetic test executables remain separate from production.
 
 Install locally from the checkout:
 

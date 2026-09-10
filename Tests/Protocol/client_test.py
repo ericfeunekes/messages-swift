@@ -10,7 +10,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-from mcp import ClientSession, StdioServerParameters
+from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
 from mcp.shared.exceptions import McpError
 
@@ -93,9 +93,18 @@ def server_parameters(reset_state=False):
     return StdioServerParameters(command=str(SERVER), args=arguments)
 
 
+class CapabilityClientSession(ClientSession):
+    async def send_request(self, request, *args, **kwargs):
+        if isinstance(request.root, types.InitializeRequest):
+            request.root.params.capabilities.experimental = {
+                "integration_test": {"nested": {"supported": True}, "values": ["text", 1, None]}
+            }
+        return await super().send_request(request, *args, **kwargs)
+
+
 async def with_client(parameters, operation):
     async with stdio_client(parameters) as (read, write):
-        async with ClientSession(read, write) as client:
+        async with CapabilityClientSession(read, write) as client:
             initialization = await client.initialize()
             await operation(client, initialization)
 
@@ -112,7 +121,7 @@ async def assert_invalid_params(client, tool, arguments):
 async def first_process(client, initialization):
     global PRIOR_CURSOR
     assert initialization.serverInfo.name == "messages-swift"
-    record("initialize")
+    record("initialize with nested experimental capabilities")
 
     listed = await client.list_tools()
     assert {tool.name for tool in listed.tools} == {

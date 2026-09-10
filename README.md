@@ -48,4 +48,4 @@ client's stdio profile. It is installed separately from the app.
 
 Real messages, contacts, attachment files, aliases and runtime databases stay outside this repository. Test data must be synthetic or explicitly redistributable. See the [reference rules](docs/references.md#source-and-data-boundaries).
 
-Licensed under [MIT](LICENSE). The narrowly adapted public imsg parser and query references retain [MIT attribution](THIRD_PARTY_NOTICES.md). The official Swift MCP SDK is pinned to 0.12.1 with its resolved dependency graph.
+Licensed under [MIT](LICENSE). The narrowly adapted public imsg parser and query references retain [MIT attribution](THIRD_PARTY_NOTICES.md). The Swift MCP SDK is pinned to a minimal [0.12.1-based compatibility patch](docs/architecture.md#runtime-setup) with its resolved dependency graph.

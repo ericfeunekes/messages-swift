@@ -1,5 +1,5 @@
 {
-  "originHash" : "0dcc7747f155ad8225cab5a016637fe5530a7ed7c2907541f3d734a36600ff5b",
+  "originHash" : "44eb4b1892c58003aed6484dbc257933a19b87deb683c94aea6e7ab55bfff233",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -175,10 +175,9 @@
     {
       "identity" : "swift-sdk",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/modelcontextprotocol/swift-sdk.git",
+      "location" : "https://github.com/ericfeunekes/swift-sdk.git",
       "state" : {
-        "revision" : "a0ae212ebf6eab5f754c3129608bc5557637e605",
-        "version" : "0.12.1"
+        "revision" : "27e1756aa30d731d606f0d3c2f8c9b3ffb89e3c7"
       }
     },
     {

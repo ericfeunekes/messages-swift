@@ -768,3 +768,13 @@ store's cursor. Removing socket rotation makes that regression fail. Fault tests
 cover an outstanding send and a large in-flight request: initialization is
 rejected, the original connection is retained and its response is delivered.
 Existing restart, cancellation and no-replay regressions remain required.
+
+On 2026-09-10, the installed private tunnel passed readiness and ChatGPT
+created and connected the private app with all ten tools. In a fresh ChatGPT
+chat, a read-only call returned the expected synthetic message text, an image
+call displayed the expected 24-by-12 red PNG, and a file call materialized the
+complete 1,529-byte PDF. A stale image attachment identifier correctly failed;
+resolving the attachment from current message metadata succeeded. ChatGPT
+requested its own file-materialization approval for the PDF. No live send was
+performed for tunnel validation. Private connection IDs and the verification
+chat remain in local deployment notes, outside this repository.

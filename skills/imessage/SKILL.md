@@ -9,7 +9,11 @@ Use the connected **Messages Private** app to access Apple Messages on the user'
 
 ## Find and read
 
-Resolve people, phone numbers, native group names or saved aliases with `find_chats`. Use the returned `chatID` for subsequent calls. If several people or conversations match, present the relevant candidates rather than choosing a send destination by rank.
+Resolve people, phone numbers, native group names or saved aliases with `find_chats`. Use the returned `chatID` for subsequent calls.
+
+For a natural reference such as “Emma” or “my family,” first check saved aliases and contact/native names. If the reference is unresolved, list both individual and group conversations active in the last seven days. Inspect likely names, participants and a small amount of relevant history before asking the user. Expand beyond that week when an older known conversation or the request warrants it; an inactive conversation is not a missing person. Recent activity is evidence, not a reason to select the busiest chat.
+
+Ask only when meaningful ambiguity remains, and present the likely candidates with the difference that matters. Once the user establishes a stable reference, use `set_chat_alias` to save their chosen name for that exact conversation. Preserve an existing alias unless replacement is intended. An alias identifies a conversation, not a global person or every group containing them. Contact names come from the Mac's configured contacts source; relationship labels such as “my family” require an established mapping. Reuse resolved identities, while retaining the exact-recipient confirmation required for sending.
 
 | Request | Tool |
 |---|---|

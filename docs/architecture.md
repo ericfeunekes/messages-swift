@@ -198,9 +198,12 @@ preserves the runtime key unless `--delete-key` is supplied explicitly.
 
 `scripts/private-tunnel/private-tunnel-service.sh` starts or stops only those
 two jobs and preserves their plists, profile and key. During a later
-`install-menu-app.sh` update, it pauses only the app supervisor, terminates the
-installed app, replaces the bundle and resumes supervision even if the update
-fails. A normal app install remains unchanged when the private service is absent.
+`install-menu-app.sh` update, it pauses every private job that was loaded: the
+tunnel first, then the app supervisor. The app is terminated and replaced, then
+the app supervisor resumes before the tunnel so the stdio bridge is replaced by
+the new executable. Failed stops block replacement; failed resumes are reported
+with a nonzero exit status. A normal app install remains unchanged when the
+private service is absent.
 
 ### Connection recovery after an app restart
 

@@ -31,6 +31,10 @@ Use message and attachment IDs from current history or search results. Attachmen
 
 ## Draft and send
 
+Before drafting or revising a message, load the `writing-for-humans` skill and briefly review Eric's recent sent messages to the exact target person or group with `read_messages`. Reuse history already read in this task when it provides a representative sample. Use Eric's outgoing text as the voice evidence; incoming messages supply conversational context. Keep the review small, expanding only when the initial sample is too sparse to reveal his usual style.
+
+Apply the observed voice, tone, diction and style as a recipient-specific overlay on `writing-for-humans`: match his level of warmth and formality, vocabulary, message length, sentence fragments, punctuation, capitalization, humour and emoji use where supported. For a group, use Eric's messages in that group. Eric's current wording instructions take precedence. If sent history is unavailable or insufficient, state that limitation briefly and use the base writing skill without inventing a relationship-specific style.
+
 Draft replies in the conversation without calling `send_message`. Before sending—even when the initial request says “send”—show the resolved recipients, exact text and any attachments, then ask for confirmation. An unchanged confirmed preview needs no second conversational confirmation. Explicit approval for a bounded test sequence applies within that sequence.
 
 Call `send_message` with the confirmed exact chat or resolved recipient. Normally omit `service`: the app selects the transport. `resolve_send_route` is an optional read-only diagnostic. Existing groups are supported; creating new groups is not.

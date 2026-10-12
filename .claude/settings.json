@@ -1,0 +1,8 @@
+{
+  "enabledPlugins": {
+    "software-development@ai-marketplace-plugins": true,
+    "dev-planning@ai-marketplace-plugins": true,
+    "design-patterns@ai-marketplace-plugins": true,
+    "swift-lsp@claude-plugins-official": true
+  }
+}
